@@ -18,6 +18,7 @@ avr-device = "0.5.4"
 either = {version = "1.6.1", default-features = false}
 cc1101 = {path = "cc1101"}
 embedded-hal-bus = "0.1.0"
+embedded-nrf24l01 = "0.2.0"
 
 
 

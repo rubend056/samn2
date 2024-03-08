@@ -4,7 +4,7 @@
 #![no_std]
 #![no_main]
 
-use arduino_hal::spi;
+use arduino_hal::{spi, Delay};
 
 use cc1101::Cc1101;
 use panic_halt as _;
@@ -23,8 +23,12 @@ fn main() -> ! {
         pins.d10.into_output(),
         spi::Settings::default(),
     );
+    let spi = embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.d7.into_output(), Delay::new());
 
-    let cc1101 = Cc1101::new(spi);
+    let mut cc1101 = Cc1101::new(spi).unwrap();
+    cc1101.get_hw_info().unwrap();
 
-    loop {}
+    loop {
+        continue;
+    }
 }
