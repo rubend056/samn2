@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 
-
 [dependencies]
 panic-halt = "0.2.0"
 ufmt = "0.2.0"
@@ -20,7 +19,10 @@ cc1101 = {path = "cc1101"}
 embedded-hal-bus = "0.1.0"
 embedded-nrf24l01 = {path = "embedded-nrf24l01"}
 panic-serial = { version = "0.1.2", features = [] }
-
+heapless = {version = "0.7", features = ["serde"]}
+serde = {version = "1.0.197", default-features = false}
+postcard = "1.0.8"
+samn-common = {path = "samn-common"}
 
 
 

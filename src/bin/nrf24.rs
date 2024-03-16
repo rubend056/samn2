@@ -3,8 +3,9 @@
 
 use arduino_hal::{delay_ms, prelude::*, spi, Delay};
 use embedded_hal::spi::{Mode, SpiDevice};
-use embedded_nrf24l01::{Configuration, CrcMode, DataRate, NRF24L01};
+use embedded_nrf24l01::{Configuration,NRF24L01};
 use panic_serial as _;
+use samn2::radio::Radio;
 
 panic_serial::impl_panic_handler!(
     // This is the type of the UART port to use for printing the message:
@@ -46,23 +47,9 @@ fn main() -> ! {
         embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.d7.into_output(), Delay::new());
 
     let mut nrf24 = NRF24L01::new(pins.d6.into_output(), spi).unwrap();
-
+    nrf24.init();
     ufmt::uwriteln!(&mut serial, "setting up nrf\r").unwrap_infallible();
-    nrf24.set_frequency(8).unwrap();
-    nrf24.set_auto_retransmit(15, 15).unwrap();
-    nrf24.set_rf(&DataRate::R2Mbps, 0).unwrap();
-    nrf24
-        .set_pipes_rx_enable(&[true, false, false, false, false, false])
-        .unwrap();
-    nrf24
-        .set_auto_ack(&[true, false, false, false, false, false])
-        .unwrap();
-    nrf24.set_pipes_rx_lengths(&[None; 6]).unwrap();
-    nrf24.set_crc(CrcMode::TwoBytes).unwrap();
-    nrf24.set_rx_addr(0, &b"fnord"[..]).unwrap();
-    nrf24.set_tx_addr(&b"fnord"[..]).unwrap();
-    nrf24.flush_rx().unwrap();
-    nrf24.flush_tx().unwrap();
+    
 
     // After this config, registers should look like this:
     // 00 -> 0e 0e // CRC on (2bytes),Power up

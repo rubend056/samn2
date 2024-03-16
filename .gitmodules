@@ -7,3 +7,6 @@
 [submodule "embedded-nrf24l01"]
 	path = embedded-nrf24l01
 	url = git@github.com:rubend056/embedded-nrf24l01.git
+[submodule "samn-common"]
+	path = samn-common
+	url = git@github.com:rubend056/samn-common.git
