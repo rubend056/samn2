@@ -5,13 +5,13 @@ use core::cmp::{max, min};
 
 use arduino_hal::{adc, delay_ms, prelude::*, spi, Delay};
 use embedded_hal::spi::{Mode, SpiDevice};
-use embedded_nrf24l01::{Configuration, NRF24L01};
+use embedded_nrf24l01::{NRF24L01};
 use heapless::Vec;
 use panic_serial as _;
-use samn2::radio::Radio;
-use samn_common::node::{
-    Command, MessageData::{self}, NodeInfo, Sensor
-};
+// use samn2::radio::Radio;
+use samn_common::{node::{
+    Command, MessageData, NodeInfo, Sensor
+}, radio::nrf24};
 
 panic_serial::impl_panic_handler!(
     // This is the type of the UART port to use for printing the message:
@@ -58,7 +58,7 @@ fn main() -> ! {
     let spi = embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.d7.into_output(), Delay::new());
 
     let mut radio = NRF24L01::new(pins.d6.into_output(), spi).unwrap();
-    radio.init();
+    nrf24::init(&mut radio);
 
     loop {
         {
@@ -75,13 +75,13 @@ fn main() -> ! {
 
             // Send sensor data
             let data: Vec<u8, 32> = postcard::to_vec(&MessageData::SensorData(data)).unwrap();
-            radio = radio.send(&data);
+            radio.write(&data);
         }
 
         // Listen for commands
         {
-            let mut bytes = Vec::new();
-            radio = radio.receive(&mut bytes);
+            radio.rx();
+            let bytes = radio.receive();
             while bytes.len() > 0 {
                 // If commands heard, answer them
                 {
@@ -93,12 +93,12 @@ fn main() -> ! {
                                 postcard::to_vec::<_, 32>(&node_info).unwrap()
                             }
                         };
-                        radio = radio.send(&data);
+                        radio.write(&data);
                     }
                 }
                 // Listen again
                 bytes.clear();
-                radio = radio.receive(&mut bytes);
+                radio.receive(&mut bytes);
             }
         }
 

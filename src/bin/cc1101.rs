@@ -32,6 +32,10 @@ fn main() -> ! {
     let serial = arduino_hal::default_serial!(dp, pins, 57600);
     // this gives ownership of the serial port to panic-serial. We receive a mutable reference to it though, so we can keep using it.
     let mut serial = share_serial_port_with_panic(serial);
+    ufmt::uwriteln!(
+        &mut serial,
+        "Hello\r",
+    ).unwrap();
 
     // Create SPI interface.
     let (spi, _) = arduino_hal::Spi::new(

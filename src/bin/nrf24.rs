@@ -3,9 +3,10 @@
 
 use arduino_hal::{delay_ms, prelude::*, spi, Delay};
 use embedded_hal::spi::{Mode, SpiDevice};
-use embedded_nrf24l01::{Configuration,NRF24L01};
+use embedded_nrf24l01::{Device, NRF24L01};
 use panic_serial as _;
-use samn2::radio::Radio;
+use samn_common::radio;
+// use samn2::radio::Radio;
 
 panic_serial::impl_panic_handler!(
     // This is the type of the UART port to use for printing the message:
@@ -16,7 +17,7 @@ panic_serial::impl_panic_handler!(
     >
 );
 
-const ALWAYS_RX: bool = true;
+const ALWAYS_RX: bool = false;
 
 #[arduino_hal::entry]
 fn main() -> ! {
@@ -47,9 +48,8 @@ fn main() -> ! {
         embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.d7.into_output(), Delay::new());
 
     let mut nrf24 = NRF24L01::new(pins.d6.into_output(), spi).unwrap();
-    nrf24.init();
+    radio::nrf24::init(&mut nrf24);
     ufmt::uwriteln!(&mut serial, "setting up nrf\r").unwrap_infallible();
-    
 
     // After this config, registers should look like this:
     // 00 -> 0e 0e // CRC on (2bytes),Power up
@@ -62,10 +62,10 @@ fn main() -> ! {
     // 07 -> 0e 0e // No interrupts, RX empty, TX empty
     // 08 -> 0e 00 // No lost packets or retrasmitted
     // 09 -> 0e 00 // No carrier detect
-    // 0a -> 0e 66 // Rx_addr_0 
+    // 0a -> 0e 66 // Rx_addr_0
     // 0b -> 0e c2 // Rx_addr_1
     // 0c -> 0e c3 // Rx_addr_2
-    // 0d -> 0e c4 // Rx_addr_3 
+    // 0d -> 0e c4 // Rx_addr_3
     // 0e -> 0e c5 // Rx_addr_4
     // 0f -> 0e c6 // Rx_addr_5
     // 10 -> 0e 66 // Tx_addr
@@ -83,12 +83,12 @@ fn main() -> ! {
     let mut led = pins.d5.into_output();
 
     if ALWAYS_RX {
-        let mut rx = nrf24.rx().unwrap();
+        nrf24.rx().unwrap();
         ufmt::uwriteln!(&mut serial, "receiving\r").unwrap_infallible();
 
         loop {
-            if let Some(_) = rx.can_read().unwrap() {
-                if let Ok(buf) = rx.read() {
+            if let Some(_) = nrf24.can_read().unwrap() {
+                if let Ok(buf) = nrf24.read() {
                     let b = core::str::from_utf8(buf.as_ref()).unwrap();
                     ufmt::uwriteln!(&mut serial, "len {} got: {}\r", buf.len(), b)
                         .unwrap_infallible();
@@ -108,24 +108,16 @@ fn main() -> ! {
         if let Ok(v) = serial.read() {
             if v == 116 {
                 // t
-                let mut tx = nrf24.tx().unwrap();
-                if tx.can_send().unwrap() {
-                    tx.send(b"Hello").unwrap();
-                    ufmt::uwriteln!(&mut serial, "put packet in tx fifo\r").unwrap_infallible();
 
-                    if nb::block!(tx.poll_send()).unwrap() {
-                        ufmt::uwriteln!(&mut serial, "sent {}!\r", t).unwrap_infallible();
-                        t += 1;
-                    } else {
-                        ufmt::uwriteln!(&mut serial, "sending failed\r").unwrap_infallible();
-                    }
+                if nrf24.send(b"Hello").unwrap() {
+                    ufmt::uwriteln!(&mut serial, "sent {}!\r", t).unwrap_infallible();
+                    t += 1;
                 } else {
                     ufmt::uwriteln!(&mut serial, "can't send\r").unwrap_infallible();
                 }
-                nrf24 = tx.standby().unwrap();
             } else if v == 114 {
                 //r
-                let mut rx = nrf24.rx().unwrap();
+                nrf24.rx().unwrap();
                 ufmt::uwriteln!(&mut serial, "receiving, press r to go back\r").unwrap_infallible();
 
                 loop {
@@ -134,22 +126,19 @@ fn main() -> ! {
                         break;
                     }
 
-                    if let Some(_) = rx.can_read().unwrap() {
-                        if let Ok(buf) = rx.read() {
-                            let b = core::str::from_utf8(buf.as_ref()).unwrap();
-                            ufmt::uwriteln!(&mut serial, "len {} got: {}\r", buf.len(), b)
-                                .unwrap_infallible();
-                        }
+                    if let Ok(buf) = nrf24.receive() {
+                        let b = core::str::from_utf8(buf.as_ref()).unwrap();
+                        ufmt::uwriteln!(&mut serial, "len {} got: {}\r", buf.len(), b)
+                            .unwrap_infallible();
                     }
-                    delay_ms(1000);
+                    delay_ms(100);
                 }
-
-                nrf24 = rx.standby();
+                nrf24.ce_disable();
             } else if v == 112 {
                 let mut a = |i| {
                     let w = [i; 1];
                     let mut r = [0x00; 2];
-                    nrf24.device().spi.transfer(&mut r, &w).unwrap();
+                    nrf24.spi.transfer(&mut r, &w).unwrap();
 
                     ufmt::uwriteln!(&mut serial, "{:02x} -> {:02x} {:02x}\r", w[0], r[0], r[1])
                         .unwrap_infallible();
@@ -165,10 +154,4 @@ fn main() -> ! {
             }
         }
     }
-    // loop {
-    //     let connected  = nrf24.device().is_connected().unwrap();
-    //     ufmt::uwriteln!(&mut serial, "nrf connected: {}\r", connected).unwrap_infallible();
-    //     // ufmt::uwriteln!(&mut serial, "test").unwrap_infallible();
-    //     arduino_hal::delay_ms(1000);
-    // }
 }
