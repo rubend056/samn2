@@ -38,14 +38,8 @@ def bit_on [v,bit] {
 def bit_off [v,bit] {
     $v | bits or (0b[1] | bits shl $bit)
 }
-def default_fuse [] {
-    # Atmega 328PB
-    mut ext = 0b[1111 0111]
-    mut high = 0b[1101 1001]
-    mut low = 0b[0110 0010]
-    [$ext $high $low]
-}
-def fuse_config_9 [] {
+def fuse_config_samn_v9 [] {
+    # atmega328pb defaults
     mut ext = 0b[1111 0111]
     mut high = 0b[1101 1001]
     mut low = 0b[0110 0010]
@@ -59,7 +53,8 @@ def fuse_config_9 [] {
 
     [$ext $high $low]
 }
-def fuse_config_8 [] {
+def fuse_config_samn_v8 [] {
+    # atmega328p defaults
     mut ext = 0b[1111 1111]
     mut high = 0b[1101 1001]
     mut low = 0b[0110 0010]
@@ -73,8 +68,8 @@ def fuse_config_8 [] {
 
     [$ext $high $low]
 }
-export def fuse_9 [] {
-    let fuses = fuse_config_9
+export def fuse_samn_v9 [] {
+    let fuses = fuse_config_samn_v9
     let args = [
         "-p" "m328pb"
         "-c" "usbasp"
@@ -85,8 +80,8 @@ export def fuse_9 [] {
 
     avrdude ...$args
 }
-export def fuse_8 [] {
-    let fuses = fuse_config_8
+export def fuse_samn_v8 [] {
+    let fuses = fuse_config_samn_v8
     let args = [
         "-p" "m328p"
         "-c" "usbasp"
