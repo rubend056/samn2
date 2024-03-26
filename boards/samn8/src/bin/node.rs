@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(abi_avr_interrupt)]
 
 use core::cmp::{max, min};
 
@@ -8,6 +9,7 @@ use embedded_hal::{
     digital::OutputPin,
     spi::{Mode, SpiDevice},
 };
+use avr_device::interrupt;
 use embedded_nrf24l01::{Device, NRF24L01};
 use heapless::Vec;
 use panic_serial as _;
@@ -36,6 +38,13 @@ fn variant_eq<T>(a: &T, b: &T) -> bool {
 const BOARD_VERSION: u8 = 9;
 const NODE_ID: u16 = 14;
 
+#[avr_device::interrupt(atmega328pb)]
+fn WDT() {
+    // We do nothing, this is just so interrupt vector is set 
+    // and device doesn't self reset, just wakes up
+    return;
+}
+
 #[arduino_hal::entry]
 fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
@@ -49,12 +58,10 @@ fn main() -> ! {
     // Radio
     let (spi, _) = arduino_hal::Spi::new(
         dp.SPI,
-        pins.d13.into_output(),
-        pins.d11.into_output(),
-        pins.d12.into_pull_up_input(),
-
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
-        pins.d10.into_output(),
+        pins.b5.into_output(),
+        pins.b3.into_output(),
+        pins.b4.into_pull_up_input(),
+        pins.b2.into_output(),
         spi::Settings {
             mode: Mode {
                 polarity: embedded_hal::spi::Polarity::IdleLow,
@@ -64,8 +71,8 @@ fn main() -> ! {
             ..Default::default()
         },
     );
-    let spi = embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.d7.into_output(), Delay::new());
-    let mut radio = NRF24L01::new(pins.d6.into_output(), spi).unwrap();
+    let spi = embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.csn.into_output(), Delay::new());
+    let mut radio = NRF24L01::new(pins.ce.into_output(), spi).unwrap();
     nrf24::init(&mut radio);
 
     // Watchdog timer
@@ -74,10 +81,10 @@ fn main() -> ! {
 
     // Battery
     let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
-    let bat_pin = pins.a3.into_analog_input(&mut adc);
+    let bat_pin = pins.battery.into_analog_input(&mut adc);
 
     // Led
-    let mut led = pins.d5.into_output();
+    let mut led = pins.led.into_output();
 
     // Actuators
     let mut actuators = Vec::<Actuator, ACTUATORS_MAX>::new();
@@ -99,6 +106,7 @@ fn main() -> ! {
             data.push(Sensor::Battery(
                 // turning adc reading into correct AA battery percentage
                 ((max(min(bat_pin.analog_read(&mut adc), 600), 300) - 300) / 2)
+                // (bat_pin.analog_read(&mut adc)/4)
                     .try_into()
                     .unwrap(),
             ))
@@ -191,7 +199,8 @@ fn main() -> ! {
             }
         }
 
-        watchdog.start(wdt::Timeout::Ms2000).unwrap();
+        
+        // watchdog.start(timeout);
         
         delay_ms(reporting_interval); // Should be sleep instead with watchdog
     }

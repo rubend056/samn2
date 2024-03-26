@@ -1,10 +1,10 @@
 [build]
-target = "specs/avr-atmega328p.json"
+target = "specs/avr-atmega328pb.json"
 
 [target.'cfg(target_arch = "avr")']
 runner = "ravedude uno -P /dev/ttyUSB0 -cb 57600"
 # To run in simulator, replace the line above with this:
-#runner = "simavr -m atmega328p"
+#runner = "simavr -m atmega328pb"
 
 [unstable]
 build-std = ["core"]

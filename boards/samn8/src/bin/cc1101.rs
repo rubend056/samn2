@@ -6,8 +6,8 @@
 
 use arduino_hal::{delay_ms, prelude::*, spi, Delay};
 
-use cc1101::{Cc1101, Config, DEVIATN, FSCTRL1, MCSM1, MDMCFG0, MDMCFG1, MDMCFG2, MDMCFG3, MDMCFG4, PKTCTRL1};
-use embedded_hal::spi::SpiDevice;
+use cc1101::Cc1101;
+use embedded_hal::spi::Mode;
 use panic_serial as _;
 
 panic_serial::impl_panic_handler!(
@@ -23,7 +23,6 @@ const RX: bool = false;
 
 use samn_common::radio::cc1101::config_1;
 
-
 #[arduino_hal::entry]
 fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
@@ -32,21 +31,26 @@ fn main() -> ! {
     let serial = arduino_hal::default_serial!(dp, pins, 57600);
     // this gives ownership of the serial port to panic-serial. We receive a mutable reference to it though, so we can keep using it.
     let mut serial = share_serial_port_with_panic(serial);
-    ufmt::uwriteln!(
-        &mut serial,
-        "Hello\r",
-    ).unwrap();
+    ufmt::uwriteln!(&mut serial, "Hello\r",).unwrap();
 
-    // Create SPI interface.
-    let (spi, _) = arduino_hal::Spi::new(
+    let (mut spi, _) = arduino_hal::Spi::new(
         dp.SPI,
-        pins.d13.into_output(),
-        pins.d11.into_output(),
-        pins.d12.into_pull_up_input(),
-        pins.d10.into_output(),
-        spi::Settings::default(),
+        pins.b5.into_output(),
+        pins.b3.into_output(),
+        pins.b4.into_pull_up_input(),
+        pins.b2.into_output(),
+        spi::Settings {
+            mode: Mode {
+                polarity: embedded_hal::spi::Polarity::IdleLow,
+                phase: embedded_hal::spi::Phase::CaptureOnFirstTransition,
+            },
+            clock: spi::SerialClockRate::OscfOver2,
+            ..Default::default()
+        },
     );
-    let spi = embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.d7.into_output(), Delay::new());
+
+    let mut spi =
+        embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.csn.into_output(), Delay::new());
 
     let mut cc1101 = Cc1101::new(spi).unwrap();
     let (chip_part_number, chip_version) = cc1101.get_hw_info().unwrap();
@@ -60,7 +64,7 @@ fn main() -> ! {
 
     cc1101.0.write_strobe(cc1101::Command::SRES).unwrap();
     delay_ms(1);
-    
+
     config_1(&mut cc1101);
 
     ufmt::uwriteln!(&mut serial, "cc1101 configured\r").unwrap_infallible();
@@ -81,11 +85,8 @@ fn main() -> ! {
             cc1101.set_radio_mode(cc1101::RadioMode::Transmit).unwrap();
             cc1101.transmit(b"Hello :)").unwrap();
             ufmt::uwriteln!(&mut serial, "Sent out {}\r", t).unwrap_infallible();
-            t+=1;
+            t += 1;
             delay_ms(1000);
         }
     }
 }
-
-
-

@@ -30,10 +30,10 @@ fn main() -> ! {
 
     let (mut spi, _) = arduino_hal::Spi::new(
         dp.SPI,
-        pins.d13.into_output(),
-        pins.d11.into_output(),
-        pins.d12.into_pull_up_input(),
-        pins.d10.into_output(),
+        pins.b5.into_output(),
+        pins.b3.into_output(),
+        pins.b4.into_pull_up_input(),
+        pins.b2.into_output(),
         spi::Settings {
             mode: Mode {
                 polarity: embedded_hal::spi::Polarity::IdleLow,
@@ -45,9 +45,9 @@ fn main() -> ! {
     );
 
     let mut spi =
-        embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.d7.into_output(), Delay::new());
+        embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.csn.into_output(), Delay::new());
 
-    let mut nrf24 = NRF24L01::new(pins.d6.into_output(), spi).unwrap();
+    let mut nrf24 = NRF24L01::new(pins.ce.into_output(), spi).unwrap();
     radio::nrf24::init(&mut nrf24);
     ufmt::uwriteln!(&mut serial, "setting up nrf\r").unwrap_infallible();
 
@@ -80,7 +80,7 @@ fn main() -> ! {
     // 1d -> 0e 05 // Dyn payloads, Dyn ack
 
     let mut t = 0;
-    let mut led = pins.d5.into_output();
+    let mut led = pins.led.into_output();
 
     if ALWAYS_RX {
         nrf24.rx().unwrap();

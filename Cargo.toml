@@ -1,10 +1,13 @@
-[package]
-name = "samn2"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+    "boards/samn9","boards/samn8"
+]
+exclude = [
+    "avr-hal/*"
+]
+resolver = "2"
 
-
-[dependencies]
+[workspace.dependencies]
 panic-halt = "0.2.0"
 ufmt = "0.2.0"
 nb = "1.1.0"
@@ -12,7 +15,6 @@ embedded-hal = "1"
 pwm-pca9685 = "0.3.1"
 embedded-storage = "0.2"
 embedded-io = "0.6.1"
-arduino-hal = {path = "avr-hal/arduino-hal", features = ["arduino-uno"]}
 avr-device = "0.5.4"
 either = {version = "1.6.1", default-features = false}
 cc1101 = {path = "cc1101"}
@@ -23,6 +25,7 @@ heapless = {version = "0.7", features = ["serde"]}
 serde = {version = "1.0.197", default-features = false}
 postcard = "1.0.8"
 samn-common = {path = "samn-common"}
+
 
 
 

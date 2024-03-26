@@ -12,7 +12,7 @@ fn main() -> ! {
     let pins = arduino_hal::pins!(dp);
 
     // Digital pin 13 is also connected to an onboard LED marked "L"
-    let mut led = pins.d5.into_output();
+    let mut led = pins.led.into_output();
     led.set_high();
 
     loop {
