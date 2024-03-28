@@ -158,10 +158,10 @@ fn main() -> ! {
                                                     actuator_update_flag = true;
                                                     Response::Ok
                                                 } else {
-                                                    Response::ErrActuatorValueTypeDoesntMatch
+                                                    Response::ErrLimbTypeDoesntMatch
                                                 }
                                             } else {
-                                                Response::ErrActuatorNotFound
+                                                Response::ErrLimbNotFound
                                             }
                                         }
                                         _ => Default::default(),
