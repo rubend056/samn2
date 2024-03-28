@@ -168,7 +168,7 @@ fn main() -> ! {
                         response: if limbs_reporting.len() > 0 {
                             Response::Limbs(limbs_reporting)
                         } else {
-                            Response::Ok
+                            Response::Heartbeat(now)
                         },
                     },
                 };
@@ -202,6 +202,7 @@ fn main() -> ! {
                                         id: Some(id),
                                         response: match command {
                                             Command::Info => Response::Info(NODE_INFO.clone()),
+                                            Command::Limbs => Response::Limbs(limbs.clone()),
                                             Command::SetLimb(limb_in) => {
                                                 if let Some(limb) = limbs
                                                     .iter_mut()
