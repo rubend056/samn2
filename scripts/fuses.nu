@@ -1,4 +1,4 @@
-##################### FUSES ATMEGA328PB ######################## 
+##################### FUSES ATMEGA328P/B #######################
 ###############  BE EXTREMELY CAREFUL WITH THIS ################
 ###############  0 means ON, 1 means OFF        ################
 ###############  Definitely use the atmega datasheet ###########
@@ -7,7 +7,7 @@
 #	6			None							1
 #	5			None							1
 #	4			None					 		1
-#	3			Disable clock failure detection	0 <- atmega328P didn't have this feature, and it was by default '1'
+#	3			Disable clock failure detection	0 <- atmega328P didn't have this feature (None), and it was by default '1'
 #	2			BODL2							1
 #	1			BODL1							1
 #	0			BODL0							1
