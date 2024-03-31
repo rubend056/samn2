@@ -3,27 +3,24 @@
 #![feature(abi_avr_interrupt)]
 
 use core::{
-    cell::Cell,
-    cmp::{max, min},
+	cell::Cell,
+	cmp::{max, min},
 };
 
-use arduino_hal::{adc, delay_ms, delay_us, hal::wdt, prelude::*, spi, Delay};
+use arduino_hal::{delay_ms, delay_us, hal::wdt, prelude::*, spi, Delay};
 use avr_device::interrupt::{self, Mutex};
-use embedded_hal::{
-    digital::OutputPin,
-    spi::{Mode, SpiDevice},
-};
+use embedded_hal::spi::Mode;
+use heapless::Vec;
 use samn_common::nrf24::{Device, NRF24L01};
-use heapless::{String, Vec};
 // use panic_serial as _;
 use panic_halt as _;
 // use samn2::radio::Radio;
 use samn_common::{
-    node::{
-        Actuator, Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response,
-        Sensor, LIMBS_MAX,
-    },
-    radio::*
+	node::{
+		Actuator, Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response,
+		Sensor, LIMBS_MAX,
+	},
+	radio::*,
 };
 
 // panic_serial::impl_panic_handler!(
@@ -37,7 +34,7 @@ use samn_common::{
 
 /// Compares only the Enum types, not the values
 fn variant_eq<T>(a: &T, b: &T) -> bool {
-    core::mem::discriminant(a) == core::mem::discriminant(b)
+	core::mem::discriminant(a) == core::mem::discriminant(b)
 }
 
 /// This is able to count up to 136 years.
@@ -45,278 +42,318 @@ static SECONDS: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
 
 #[avr_device::interrupt(atmega328pb)]
 fn WDT() {
-    // We do nothing, this is just so interrupt vector is set
-    // and device doesn't self reset, just wakes up
-    // return;
+	// We do nothing, this is just so interrupt vector is set
+	// and device doesn't self reset, just wakes up
+	// return;
 
-    // Actually we'll use this as our timer
-    avr_device::interrupt::free(|cs| {
-        let seconds = SECONDS.borrow(cs);
-        seconds.set(seconds.get() + 2);
-    })
+	// Actually we'll use this as our timer
+	avr_device::interrupt::free(|cs| {
+		let seconds = SECONDS.borrow(cs);
+		seconds.set(seconds.get() + 2);
+	})
 }
 
 #[arduino_hal::entry]
 fn main() -> ! {
-    let dp = arduino_hal::Peripherals::take().unwrap();
-    let pins = arduino_hal::pins!(dp);
+	let dp = arduino_hal::Peripherals::take().unwrap();
+	let pins = arduino_hal::pins!(dp);
 
-    const NODE_ID: u16 = 22;
-    let node_info: NodeInfo = NodeInfo {
-        name: "Pantry".into(),
-        board: Board::SamnV9,
-    };
+	const NODE_ID: u16 = 22;
+	let node_info: NodeInfo = NodeInfo {
+		name: "Pantry".into(),
+		board: Board::SamnV9,
+	};
 
-    // Serial
-    // let serial = arduino_hal::default_serial!(dp, pins, 57600);
-    // // this gives ownership of the serial port to panic-serial. We receive a mutable reference to it though, so we can keep using it.
-    // let mut serial = share_serial_port_with_panic(serial);
+	// Serial
+	// let serial = arduino_hal::default_serial!(dp, pins, 57600);
+	// // this gives ownership of the serial port to panic-serial. We receive a mutable reference to it though, so we can keep using it.
+	// let mut serial = share_serial_port_with_panic(serial);
 
-    // Radio
-    let (spi, _) = arduino_hal::Spi::new(
-        dp.SPI0,
-        pins.b5.into_output(),
-        pins.b3.into_output(),
-        pins.b4.into_pull_up_input(),
-        pins.b2.into_output(),
-        spi::Settings {
-            mode: Mode {
-                polarity: embedded_hal::spi::Polarity::IdleLow,
-                phase: embedded_hal::spi::Phase::CaptureOnFirstTransition,
-            },
-            clock: spi::SerialClockRate::OscfOver2,
-            ..Default::default()
-        },
-    );
-    let spi =
-        embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.csn.into_output(), Delay::new());
-    let mut radio = NRF24L01::new(pins.g2_ce.into_output(), spi).unwrap();
-    radio.configure().unwrap();
+	// Radio
+	let (spi, _) = arduino_hal::Spi::new(
+		dp.SPI0,
+		pins.b5.into_output(),
+		pins.b3.into_output(),
+		pins.b4.into_pull_up_input(),
+		pins.b2.into_output(),
+		spi::Settings {
+			mode: Mode {
+				polarity: embedded_hal::spi::Polarity::IdleLow,
+				phase: embedded_hal::spi::Phase::CaptureOnFirstTransition,
+			},
+			clock: spi::SerialClockRate::OscfOver2,
+			..Default::default()
+		},
+	);
+	let spi =
+		embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.csn.into_output(), Delay::new());
+	let mut radio = NRF24L01::new(pins.g2_ce.into_output(), spi).unwrap();
+	radio.configure().unwrap();
 
-    // Watchdog timer
-    let mut watchdog = wdt::Wdt::new(dp.WDT, &dp.CPU.mcusr);
-    // Start watchdog :) , operations shouldn't take longer than 2sec.
-    watchdog.start(wdt::Timeout::Ms2000).unwrap();
-    // dp.AC
+	// Bme280
+	let i2c = arduino_hal::i2c::I2c0::new(
+		dp.TWI0,
+		pins.c4.into_pull_up_input(),
+		pins.c5.into_pull_up_input(),
+		50_000,
+	);
 
-    // Battery
-    let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
-    let bat_pin = pins.battery.into_analog_input(&mut adc);
+	const SETTINGS: bme280_multibus::Settings = bme280_multibus::Settings {
+		config: bme280_multibus::Config::RESET
+			.set_standby_time(bme280_multibus::Standby::Millis125)
+			.set_filter(bme280_multibus::Filter::X8),
+		ctrl_meas: bme280_multibus::CtrlMeas::RESET
+			.set_osrs_t(bme280_multibus::Oversampling::X8)
+			.set_osrs_p(bme280_multibus::Oversampling::X8)
+			.set_mode(bme280_multibus::Mode::Normal),
+		ctrl_hum: bme280_multibus::Oversampling::X8,
+	};
+	let mut bme280 =
+		bme280_multibus::Bme280::from_i2c0(i2c, bme280_multibus::Address::SdoGnd).unwrap();
+	bme280.reset().unwrap();
+	delay_ms(20);
+	bme280.settings(&SETTINGS).unwrap();
+	delay_ms(1000);
 
-    // Led
-    let mut led = pins.led.into_output();
+	// Watchdog timer
+	let mut watchdog = wdt::Wdt::new(dp.WDT, &dp.CPU.mcusr);
+	// Start watchdog :) , operations shouldn't take longer than 2sec.
+	watchdog.start(wdt::Timeout::Ms2000).unwrap();
+	// dp.AC
 
-    let mut limbs = Limbs::new();
-    limbs
-        .push(Limb(
-            0,
-            LimbType::Sensor {
-                report_interval: 60,
-                data: None,
-            },
-        ))
-        .unwrap();
-    limbs
-        .push(Limb(1, LimbType::Actuator(Actuator::Light(false))))
-        .unwrap();
+	// Battery
+	let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
+	let bat_pin = pins.battery.into_analog_input(&mut adc);
 
-    // Sensor Id -> last_report_time
-    let mut last_heartbeat: u32 = 0;
-    let mut sensor_last_report = heapless::LinearMap::<_, _, LIMBS_MAX>::new();
-    // Should we update the actuators
-    let mut actuator_update_flag = true;
+	// Led
+	let mut led = pins.led.into_output();
 
-    let mut irq = pins.g0_irq;
-    loop {
-        {
-            let now = interrupt::free(|cs| SECONDS.borrow(cs).get());
-            // Here we check if sensors need to report anything
-            // Depending on the report interval of each sensor
-            let mut limbs_reporting = Limbs::new();
+	let mut limbs = Limbs::new();
+	limbs
+		.push(Limb(
+			0,
+			LimbType::Sensor {
+				report_interval: 60,
+				data: None,
+			},
+		))
+		.unwrap();
+	limbs
+		.push(Limb(1, LimbType::Actuator(Actuator::Light(false))))
+		.unwrap();
+	limbs
+		.push(Limb(
+			2,
+			LimbType::Sensor {
+				report_interval: 60,
+				data: None,
+			},
+		))
+		.unwrap();
 
-            for limb in limbs.iter_mut() {
-                if let LimbType::Sensor {
-                    report_interval,
-                    data,
-                } = &mut limb.1
-                {
-                    // Check if it's our time to report, using report_interval
-                    if sensor_last_report
-                        .get(&limb.0)
-                        .map(|last| now >= *last + (*report_interval as u32))
-                        .unwrap_or(true)
-                    {
-                        // Set limb ID 0 as Battery
-                        if limb.0 == 0 {
-                            *data = Some(Sensor::Battery(
-                                // turning adc reading into correct AA battery percentage
-                                ((max(min(bat_pin.analog_read(&mut adc), 500), 300) - 300) / 2)
-                                    // (bat_pin.analog_read(&mut adc)/4)
-                                    .try_into()
-                                    .unwrap(),
-                            ));
-                        }
-                        limbs_reporting.push(limb.clone()).unwrap();
-                        sensor_last_report.insert(limb.0, now).unwrap();
-                    }
-                }
-            }
+	// Sensor Id -> last_report_time
+	let mut last_heartbeat: u32 = 0;
+	let mut sensor_last_report = heapless::LinearMap::<_, _, LIMBS_MAX>::new();
+	// Should we update the actuators
+	let mut actuator_update_flag = true;
 
-            // Only send if there's any sensor to report
-            // Or we have a hearbeat due
-            if limbs_reporting.len() > 0 || now >= last_heartbeat + 10 {
-                let message = Message {
-                    id: NODE_ID,
-                    data: MessageData::Response {
-                        id: None,
-                        response: if limbs_reporting.len() > 0 {
-                            Response::Limbs(limbs_reporting)
-                        } else {
-                            Response::Heartbeat(now)
-                        },
-                    },
-                };
-                let data: Vec<u8, 32> = postcard::to_vec(&message).unwrap();
+	let mut irq = pins.g0_irq;
+	loop {
+		{
+			let now = interrupt::free(|cs| SECONDS.borrow(cs).get());
+			// Here we check if sensors need to report anything
+			// Depending on the report interval of each sensor
+			let mut limbs_reporting = Limbs::new();
 
-                // Indicate we are sending
-                led.toggle();
-                delay_ms(100);
-                led.toggle();
+			for limb in limbs.iter_mut() {
+				if let LimbType::Sensor {
+					report_interval,
+					data,
+				} = &mut limb.1
+				{
+					// Check if it's our time to report, using report_interval
+					if sensor_last_report
+						.get(&limb.0)
+						.map(|last| now >= *last + (*report_interval as u32))
+						.unwrap_or(true)
+					{
+						if limb.0 == 0 {
+							// Set limb ID 0 as Battery
+							*data = Some(Sensor::Battery(
+								// turning adc reading into correct AA battery percentage
+								((max(min(bat_pin.analog_read(&mut adc), 500), 300) - 300) / 2)
+									// (bat_pin.analog_read(&mut adc)/4)
+									.try_into()
+									.unwrap(),
+							));
+						} else if limb.0 == 2 {
+							// Set limb ID 2 as BME280
+							let measurement = bme280.sample().unwrap();
+							*data = Some(Sensor::TempHum((
+								measurement.temperature.try_into().unwrap(),
+								measurement.humidity.try_into().unwrap(),
+							)));
+						}
+						limbs_reporting.push(limb.clone()).ok();
+						sensor_last_report.insert(limb.0, now).unwrap();
+					}
+				}
+			}
 
-                radio.transmit_(&Payload::new(&data)).unwrap();
-                last_heartbeat = now;
-            }
-        }
+			// Only send if there's any sensor to report
+			// Or we have a hearbeat due
+			if limbs_reporting.len() > 0 || now >= last_heartbeat + 10 {
+				let message = Message {
+					id: NODE_ID,
+					data: MessageData::Response {
+						id: None,
+						response: if limbs_reporting.len() > 0 {
+							Response::Limbs(limbs_reporting)
+						} else {
+							Response::Heartbeat(now)
+						},
+					},
+				};
+				let data: Vec<u8, 32> = postcard::to_vec(&message).unwrap();
 
-        // Listen for commands for >=76ms, reset counter if command received
-        {
-            let mut i = 0u8;
-            radio.rx().unwrap();
-            while i < u8::MAX {
-                if let Ok(payload) = radio.receive_(&mut irq) {
-                    // If commands heard, answer them
-                    {
-                        // Answer command
-                        let message: Message = postcard::from_bytes(payload.data()).unwrap();
-                        match message.data {
-                            MessageData::Command { id, command } => {
-                                let data = postcard::to_vec::<_, 32>(&Message {
-                                    id: NODE_ID,
-                                    data: MessageData::Response {
-                                        id: Some(id),
-                                        response: match command {
-                                            Command::Info => Response::Info(node_info.clone()),
-                                            Command::Limbs => Response::Limbs(limbs.clone()),
-                                            Command::SetLimb(limb_in) => {
-                                                if let Some(limb) = limbs
-                                                    .iter_mut()
-                                                    .find(|limb| limb.0 == limb_in.0)
-                                                {
-                                                    if variant_eq(&limb.1, &limb_in.1) {
-                                                        match (&mut limb.1, limb_in.1) {
-                                                            (
-                                                                LimbType::Actuator(actuator),
-                                                                LimbType::Actuator(actuator_in),
-                                                            ) => {
-                                                                if variant_eq(
-                                                                    actuator,
-                                                                    &actuator_in,
-                                                                ) {
-                                                                    *actuator = actuator_in;
-                                                                    actuator_update_flag = true;
-                                                                    Response::Ok
-                                                                } else {
-                                                                    Response::ErrLimbTypeDoesntMatch
-                                                                }
-                                                            }
+				// Indicate we are sending
+				led.toggle();
+				delay_ms(100);
+				led.toggle();
 
-                                                            (
-                                                                LimbType::Sensor {
-                                                                    report_interval,
-                                                                    data: _,
-                                                                },
-                                                                LimbType::Sensor {
-                                                                    report_interval:
-                                                                        report_interval_in,
-                                                                    data: _,
-                                                                },
-                                                            ) => {
-                                                                *report_interval =
-                                                                    report_interval_in;
-                                                                Response::Ok
-                                                            }
-                                                            _ => Response::ErrLimbTypeDoesntMatch,
-                                                        }
-                                                    } else {
-                                                        Response::ErrLimbTypeDoesntMatch
-                                                    }
-                                                } else {
-                                                    Response::ErrLimbNotFound
-                                                }
-                                            }
-                                            _ => Default::default(),
-                                        },
-                                    },
-                                })
-                                .unwrap();
-                                radio.ce_disable(); // Stop rx
-                                radio.transmit_(&Payload::new(&data)).unwrap(); // Send sets tx, sends
-                                radio.rx().unwrap(); // Back to rx
-                                i = 0; // Reset timeout counter
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                i += 1;
-                delay_us(300);
-            }
+				radio.transmit_(&Payload::new(&data)).unwrap();
+				last_heartbeat = now;
+			}
+		}
 
-            radio.ce_disable();
-        }
+		// Listen for commands for >=76ms, reset counter if command received
+		{
+			let mut i = 0u8;
+			radio.rx().unwrap();
+			while i < u8::MAX {
+				if let Ok(payload) = radio.receive_(&mut irq) {
+					// If commands heard, answer them
+					{
+						// Answer command
+						let message: Message = postcard::from_bytes(payload.data()).unwrap();
+						match message.data {
+							MessageData::Command { id, command } => {
+								let data = postcard::to_vec::<_, 32>(&Message {
+									id: NODE_ID,
+									data: MessageData::Response {
+										id: Some(id),
+										response: match command {
+											Command::Info => Response::Info(node_info.clone()),
+											Command::Limbs => Response::Limbs(limbs.clone()),
+											Command::SetLimb(limb_in) => {
+												if let Some(limb) = limbs
+													.iter_mut()
+													.find(|limb| limb.0 == limb_in.0)
+												{
+													if variant_eq(&limb.1, &limb_in.1) {
+														match (&mut limb.1, limb_in.1) {
+															(
+																LimbType::Actuator(actuator),
+																LimbType::Actuator(actuator_in),
+															) => {
+																if variant_eq(
+																	actuator,
+																	&actuator_in,
+																) {
+																	*actuator = actuator_in;
+																	actuator_update_flag = true;
+																	Response::Ok
+																} else {
+																	Response::ErrLimbTypeDoesntMatch
+																}
+															}
 
-        {
-            // Update actuators
-            if actuator_update_flag {
-                {
-                    for limb in limbs.iter() {
-                        if let LimbType::Actuator(actuator) = &limb.1 {
-                            match actuator {
-                                Actuator::Light(value) => {
-                                    if limb.0 == 1 {
-                                        if *value {
-                                            led.set_high();
-                                        } else {
-                                            led.set_low();
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
+															(
+																LimbType::Sensor {
+																	report_interval,
+																	data: _,
+																},
+																LimbType::Sensor {
+																	report_interval:
+																		report_interval_in,
+																	data: _,
+																},
+															) => {
+																*report_interval =
+																	report_interval_in;
+																Response::Ok
+															}
+															_ => Response::ErrLimbTypeDoesntMatch,
+														}
+													} else {
+														Response::ErrLimbTypeDoesntMatch
+													}
+												} else {
+													Response::ErrLimbNotFound
+												}
+											}
+											_ => Default::default(),
+										},
+									},
+								})
+								.unwrap();
+								radio.ce_disable(); // Stop rx
+								radio.transmit_(&Payload::new(&data)).unwrap(); // Send sets tx, sends
+								radio.rx().unwrap(); // Back to rx
+								i = 0; // Reset timeout counter
+							}
+							_ => {}
+						}
+					}
+				}
+				i += 1;
+				delay_us(300);
+			}
 
-                actuator_update_flag = false;
-            }
-        }
+			radio.ce_disable();
+		}
 
-        
-        {
-            // A little stealing so we can set some low level registers
-            let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
-            // Enable watchdog timer as an interrupt
-            dp.WDT.wdtcsr.modify(|_, w| w.wdie().set_bit());
-            // Enable sleep, set mode to power-down
-            dp.CPU.smcr.modify(|_, w| w.se().set_bit().sm().pdown());
-            unsafe {
-                // Enable interrupts
-                avr_device::interrupt::enable();
-                // Sleep
-                avr_device::asm::sleep();
-            }
-        }
+		{
+			// Update actuators
+			if actuator_update_flag {
+				{
+					for limb in limbs.iter() {
+						if let LimbType::Actuator(actuator) = &limb.1 {
+							match actuator {
+								Actuator::Light(value) => {
+									if limb.0 == 1 {
+										if *value {
+											led.set_high();
+										} else {
+											led.set_low();
+										}
+									}
+								}
+								_ => {}
+							}
+						}
+					}
+				}
 
-        // delay_ms(reporting_interval); // Should be sleep instead with watchdog
-    }
+				actuator_update_flag = false;
+			}
+		}
+
+		{
+			// A little stealing so we can set some low level registers
+			let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
+			// Enable watchdog timer as an interrupt
+			dp.WDT.wdtcsr.modify(|_, w| w.wdie().set_bit());
+			// Enable sleep, set mode to power-down
+			dp.CPU.smcr.modify(|_, w| w.se().set_bit().sm().pdown());
+			unsafe {
+				// Enable interrupts
+				avr_device::interrupt::enable();
+				// Sleep
+				avr_device::asm::sleep();
+			}
+		}
+
+		// delay_ms(reporting_interval); // Should be sleep instead with watchdog
+	}
 }

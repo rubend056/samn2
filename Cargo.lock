@@ -221,6 +221,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf4b9d6a944f767f8e5e0db018570623c85f3d925ac718db4e06d0187adb21c1"
 
 [[package]]
+name = "bme280-multibus"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "658e012a6ce0784450ff5e3ee0187a557b81fcd048c971bd4a3c53e5c145dabd"
+dependencies = [
+ "embedded-hal 0.2.7",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -440,6 +451,15 @@ name = "embedded-hal"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
+
+[[package]]
+name = "embedded-hal-async"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c4c685bbef7fe13c3c6dd4da26841ed3980ef33e841cddfa15ce8a8fb3f1884"
+dependencies = [
+ "embedded-hal 1.0.0",
+]
 
 [[package]]
 name = "embedded-hal-bus"
@@ -834,6 +854,12 @@ dependencies = [
  "libc",
  "winapi",
 ]
+
+[[package]]
+name = "micromath"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3c8dda44ff03a2f238717214da50f65d5a53b45cd213a7370424ffdb6fae815"
 
 [[package]]
 name = "min-max-heap"
@@ -1236,6 +1262,7 @@ version = "0.1.0"
 dependencies = [
  "arduino-hal",
  "avr-device",
+ "bme280-multibus",
  "dht11",
  "either",
  "embedded-hal 1.0.0",
@@ -1251,6 +1278,7 @@ dependencies = [
  "samn-common",
  "serde",
  "ufmt",
+ "ufmt_float",
 ]
 
 [[package]]
@@ -1595,6 +1623,16 @@ name = "ufmt-write"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e87a2ed6b42ec5e28cc3b94c09982969e9227600b2e3dcbc1db927a84c06bd69"
+
+[[package]]
+name = "ufmt_float"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7181bd69b8da1f7822e3b9ab86e89c1c9bd42a6558407c81821ed18738d097b4"
+dependencies = [
+ "micromath",
+ "ufmt",
+]
 
 [[package]]
 name = "unicode-bidi"

@@ -18,7 +18,7 @@ embedded-io = "0.6.1"
 avr-device = "0.5.4"
 either = {version = "1.6.1", default-features = false}
 embedded-hal-bus = "0.1.0"
-panic-serial = { version = "0.1.2", features = ["full"] }
+panic-serial = { version = "0.1.2", features = ["location"] }
 heapless = {version = "0.8", features = ["serde", "ufmt"]}
 serde = {version = "1.0.197", default-features = false}
 postcard = {git = "https://github.com/jamesmunns/postcard.git"}

@@ -16,7 +16,8 @@
     "no-default-libraries": false,
     "pre-link-args": {
       "gcc": [
-        "-mmcu=atmega328pb"
+        "-mmcu=atmega328pb",
+        "-Wl,--as-needed,--print-memory-usage"
       ]
     },
     "relocation-model": "static",
