@@ -52,7 +52,7 @@ fn WDT() {
     // Actually we'll use this as our timer
     avr_device::interrupt::free(|cs| {
         let seconds = SECONDS.borrow(cs);
-        seconds.set(seconds.get() + 1);
+        seconds.set(seconds.get() + 2);
     })
 }
 
@@ -95,6 +95,8 @@ fn main() -> ! {
 
     // Watchdog timer
     let mut watchdog = wdt::Wdt::new(dp.WDT, &dp.CPU.mcusr);
+    // Start watchdog :) , operations shouldn't take longer than 2sec.
+    watchdog.start(wdt::Timeout::Ms2000).unwrap();
     // dp.AC
 
     // Battery
@@ -299,8 +301,7 @@ fn main() -> ! {
             }
         }
 
-        // Start watchdog, this also resets it :)
-        watchdog.start(wdt::Timeout::Ms1000).unwrap();
+        
         {
             // A little stealing so we can set some low level registers
             let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
