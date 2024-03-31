@@ -61,7 +61,7 @@ fn main() -> ! {
     let pins = arduino_hal::pins!(dp);
 
     const NODE_ID: u16 = 22;
-    let NODE_INFO: NodeInfo = NodeInfo {
+    let node_info: NodeInfo = NodeInfo {
         name: "Pantry".into(),
         board: Board::SamnV9,
     };
@@ -201,7 +201,7 @@ fn main() -> ! {
                                     data: MessageData::Response {
                                         id: Some(id),
                                         response: match command {
-                                            Command::Info => Response::Info(NODE_INFO.clone()),
+                                            Command::Info => Response::Info(node_info.clone()),
                                             Command::Limbs => Response::Limbs(limbs.clone()),
                                             Command::SetLimb(limb_in) => {
                                                 if let Some(limb) = limbs

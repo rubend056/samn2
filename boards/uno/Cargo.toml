@@ -1,10 +1,10 @@
 [package]
-name = "samn9"
+name = "uno"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-arduino-hal = {path = "../../avr-hal/arduino-hal", features = ["samn9"]}
+arduino-hal = {path = "../../avr-hal/arduino-hal", features = ["arduino-uno"]}
 panic-halt = {workspace = true}
 ufmt = {workspace = true}
 nb = {workspace = true}
@@ -22,4 +22,3 @@ heapless = {workspace = true}
 serde = {workspace = true}
 postcard = {workspace = true}
 samn-common = {workspace=true}
-dht11 = "0.3.1"

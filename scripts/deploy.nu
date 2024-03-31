@@ -11,3 +11,7 @@ export def main [board, bin] {
     build $board $bin
     avrdude -p (get_avrdude_mega $board) -c usbasp -U $"flash:w:out/($board)/($bin).elf"
 }
+export def run [board, bin] {
+    enter $"boards/($board)"
+        cargo run --release --bin $bin
+}

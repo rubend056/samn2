@@ -79,7 +79,7 @@ fn main() -> ! {
     // 1c -> 0e 3f // Rx dynamic payloads ON all pipes
     // 1d -> 0e 05 // Dyn payloads, Dyn ack
 
-    let mut t = 0;
+    
     let mut led = pins.led.into_output();
 
     if ALWAYS_RX {
@@ -103,6 +103,8 @@ fn main() -> ! {
 
     ufmt::uwriteln!(&mut serial, "t: transmit; r: receive; p: print registers\r")
         .unwrap_infallible();
+    
+    let mut t = 0;
     loop {
         delay_ms(10);
         if let Ok(v) = serial.read() {
