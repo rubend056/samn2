@@ -148,7 +148,7 @@ fn main() -> ! {
                         if limb.0 == 0 {
                             *data = Some(Sensor::Battery(
                                 // turning adc reading into correct AA battery percentage
-                                ((max(min(bat_pin.analog_read(&mut adc), 600), 300) - 300) / 2)
+                                ((max(min(bat_pin.analog_read(&mut adc), 500), 300) - 300) / 2)
                                     // (bat_pin.analog_read(&mut adc)/4)
                                     .try_into()
                                     .unwrap(),
