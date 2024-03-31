@@ -13,26 +13,27 @@ use embedded_hal::{
     digital::OutputPin,
     spi::{Mode, SpiDevice},
 };
-use embedded_nrf24l01::{Device, NRF24L01};
+use samn_common::nrf24::{Device, NRF24L01};
 use heapless::{String, Vec};
-use panic_serial as _;
+// use panic_serial as _;
+use panic_halt as _;
 // use samn2::radio::Radio;
 use samn_common::{
     node::{
         Actuator, Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response,
         Sensor, LIMBS_MAX,
     },
-    radio::nrf24,
+    radio::*
 };
 
-panic_serial::impl_panic_handler!(
-    // This is the type of the UART port to use for printing the message:
-    arduino_hal::usart::Usart<
-      arduino_hal::pac::USART0,
-      arduino_hal::port::Pin<arduino_hal::port::mode::Input, arduino_hal::hal::port::PD0>,
-      arduino_hal::port::Pin<arduino_hal::port::mode::Output, arduino_hal::hal::port::PD1>
-    >
-);
+// panic_serial::impl_panic_handler!(
+//     // This is the type of the UART port to use for printing the message:
+//     arduino_hal::usart::Usart<
+//       arduino_hal::pac::USART0,
+//       arduino_hal::port::Pin<arduino_hal::port::mode::Input, arduino_hal::hal::port::PD0>,
+//       arduino_hal::port::Pin<arduino_hal::port::mode::Output, arduino_hal::hal::port::PD1>
+//     >
+// );
 
 /// Compares only the Enum types, not the values
 fn variant_eq<T>(a: &T, b: &T) -> bool {
@@ -67,9 +68,9 @@ fn main() -> ! {
     };
 
     // Serial
-    let serial = arduino_hal::default_serial!(dp, pins, 57600);
-    // this gives ownership of the serial port to panic-serial. We receive a mutable reference to it though, so we can keep using it.
-    let mut serial = share_serial_port_with_panic(serial);
+    // let serial = arduino_hal::default_serial!(dp, pins, 57600);
+    // // this gives ownership of the serial port to panic-serial. We receive a mutable reference to it though, so we can keep using it.
+    // let mut serial = share_serial_port_with_panic(serial);
 
     // Radio
     let (spi, _) = arduino_hal::Spi::new(
@@ -90,7 +91,7 @@ fn main() -> ! {
     let spi =
         embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.csn.into_output(), Delay::new());
     let mut radio = NRF24L01::new(pins.g2_ce.into_output(), spi).unwrap();
-    nrf24::init(&mut radio);
+    radio.configure().unwrap();
 
     // Watchdog timer
     let mut watchdog = wdt::Wdt::new(dp.WDT, &dp.CPU.mcusr);
@@ -123,6 +124,7 @@ fn main() -> ! {
     // Should we update the actuators
     let mut actuator_update_flag = true;
 
+    let mut irq = pins.g0_irq;
     loop {
         {
             let now = interrupt::free(|cs| SECONDS.borrow(cs).get());
@@ -179,7 +181,7 @@ fn main() -> ! {
                 delay_ms(100);
                 led.toggle();
 
-                radio.send(&data).unwrap();
+                radio.transmit_(&Payload::new(&data)).unwrap();
                 last_heartbeat = now;
             }
         }
@@ -189,11 +191,11 @@ fn main() -> ! {
             let mut i = 0u8;
             radio.rx().unwrap();
             while i < u8::MAX {
-                if let Ok(bytes) = radio.receive() {
+                if let Ok(payload) = radio.receive_(&mut irq) {
                     // If commands heard, answer them
                     {
                         // Answer command
-                        let message: Message = postcard::from_bytes(&bytes).unwrap();
+                        let message: Message = postcard::from_bytes(payload.data()).unwrap();
                         match message.data {
                             MessageData::Command { id, command } => {
                                 let data = postcard::to_vec::<_, 32>(&Message {
@@ -256,7 +258,7 @@ fn main() -> ! {
                                 })
                                 .unwrap();
                                 radio.ce_disable(); // Stop rx
-                                radio.send(&data).unwrap(); // Send sets tx, sends
+                                radio.transmit_(&Payload::new(&data)).unwrap(); // Send sets tx, sends
                                 radio.rx().unwrap(); // Back to rx
                                 i = 0; // Reset timeout counter
                             }

@@ -6,7 +6,7 @@
 
 use arduino_hal::{delay_ms, prelude::*, spi, Delay};
 
-use cc1101::{Cc1101, config0::Payload};
+use samn_common::{radio::{Payload, Radio}, cc1101::{Cc1101}};
 use embedded_hal::spi::Mode;
 use heapless::Vec;
 use panic_serial as _;
@@ -77,8 +77,9 @@ fn main() -> ! {
                 "Sending {}\r",
                 t
             ).unwrap_infallible();
+            
             // Transmit the payload
-            cc1101.transmit(&Payload::new(&data)).unwrap();
+            cc1101.transmit_(&Payload::new(&data)).unwrap();
 
             // ufmt::uwrite!(&mut serial,"writing, ",).unwrap_infallible();
             // let mut packet = [0u8;32];
@@ -110,7 +111,7 @@ fn main() -> ! {
             // Wait ~200ms for an ack
             let mut i = 0;
             while i < 200 {
-                if let Ok(payload) = cc1101.receive(&mut crc_pin) {
+                if let Ok(payload) = cc1101.receive_(&mut crc_pin) {
                     
                     if payload.data()[0] == 55 {
                         got_ack = true;

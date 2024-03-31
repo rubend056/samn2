@@ -6,7 +6,7 @@
 
 use arduino_hal::{delay_ms, prelude::*, spi, Delay};
 
-use cc1101::{config0::Payload, Cc1101, RadioMode};
+use samn_common::{cc1101::{ Cc1101, RadioMode}, radio::*};
 use embedded_hal::spi::Mode;
 use heapless::{String, Vec};
 use panic_serial as _;
@@ -77,7 +77,7 @@ fn main() -> ! {
         cc1101.to_rx().unwrap();
 
         // Get a payload
-        if let Ok(payload) = nb::block!(cc1101.receive(&mut crc_pin)) {
+        if let Ok(payload) = nb::block!(cc1101.receive_(&mut crc_pin)) {
             // ufmt::uwriteln!(&mut serial, "got pkt\r").unwrap_infallible();
             // delay_ms(5);
 
@@ -85,7 +85,7 @@ fn main() -> ! {
             {
                 // Have to do this or CCA won't let me switch to TX
                 cc1101.to_idle().unwrap();
-                cc1101.transmit(&Payload::new(&[55])).unwrap();
+                cc1101.transmit_(&Payload::new(&[55])).unwrap();
             }
 
             // ufmt::uwrite!(&mut serial,"state: {}, ",cc1101.get_marc_state().unwrap()).unwrap_infallible();

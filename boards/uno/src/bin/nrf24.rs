@@ -3,7 +3,7 @@
 
 use arduino_hal::{delay_ms, prelude::*, spi, Delay};
 use embedded_hal::spi::{Mode, SpiDevice};
-use embedded_nrf24l01::{DataRate, Device, NRF24L01};
+use samn_common::{nrf24::{DataRate, Device, NRF24L01}, radio::*};
 use panic_serial as _;
 use samn_common::radio;
 // use samn2::radio::Radio;
@@ -46,16 +46,17 @@ fn main() -> ! {
         embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.d7.into_output(), Delay::new());
 
     let mut nrf24 = NRF24L01::new(pins.d6.into_output(), spi).unwrap();
-    radio::nrf24::init(&mut nrf24);
+    nrf24.configure();
     ufmt::uwriteln!(&mut serial, "setting up nrf\r").unwrap_infallible();
+    let mut irq = pins.d5;
 
     {
         nrf24.rx().unwrap();
         ufmt::uwriteln!(&mut serial, "receiving\r").unwrap_infallible();
 
         loop {
-            if let Ok(buf) = nrf24.receive() {
-                let b = core::str::from_utf8(buf.as_ref()).unwrap();
+            if let Ok(buf) = nrf24.receive_(&mut irq) {
+                let b = core::str::from_utf8(buf.data()).unwrap();
                 ufmt::uwriteln!(&mut serial, "len {} got: {}\r", buf.len(), b).unwrap_infallible();
             }
             delay_ms(1);

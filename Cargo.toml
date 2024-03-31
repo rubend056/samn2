@@ -17,9 +17,7 @@ embedded-storage = "0.2"
 embedded-io = "0.6.1"
 avr-device = "0.5.4"
 either = {version = "1.6.1", default-features = false}
-cc1101 = {path = "cc1101"}
 embedded-hal-bus = "0.1.0"
-embedded-nrf24l01 = {path = "embedded-nrf24l01"}
 panic-serial = { version = "0.1.2", features = ["full"] }
 heapless = {version = "0.8", features = ["serde", "ufmt"]}
 serde = {version = "1.0.197", default-features = false}

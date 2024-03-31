@@ -1,12 +1,8 @@
-[submodule "cc1101"]
-	path = cc1101
-	url = git@github.com:rubend056/cc1101.git
 [submodule "avr-hal"]
 	path = avr-hal
 	url = git@github.com:rubend056/avr-hal.git
-[submodule "embedded-nrf24l01"]
-	path = embedded-nrf24l01
-	url = git@github.com:rubend056/embedded-nrf24l01.git
+	branch = samn
 [submodule "samn-common"]
 	path = samn-common
 	url = git@github.com:rubend056/samn-common.git
+	branch = main
