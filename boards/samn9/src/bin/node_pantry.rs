@@ -262,7 +262,10 @@ fn main() -> ! {
 																) {
 																	*actuator = actuator_in;
 																	actuator_update_flag = true;
-																	Response::Ok
+
+																	// Send limbs again
+																	Response::Limbs(limbs.clone())
+																	// Response::Ok
 																} else {
 																	Response::ErrLimbTypeDoesntMatch
 																}
@@ -281,7 +284,10 @@ fn main() -> ! {
 															) => {
 																*report_interval =
 																	report_interval_in;
-																Response::Ok
+																
+																// Send limbs again
+																Response::Limbs(limbs.clone())
+																// Response::Ok
 															}
 															_ => Response::ErrLimbTypeDoesntMatch,
 														}
