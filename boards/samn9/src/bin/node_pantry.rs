@@ -98,18 +98,18 @@ fn main() -> ! {
 		50_000,
 	);
 
-	const SETTINGS: bme280_multibus::Settings = bme280_multibus::Settings {
-		config: bme280_multibus::Config::RESET
-			.set_standby_time(bme280_multibus::Standby::Millis125)
-			.set_filter(bme280_multibus::Filter::X8),
-		ctrl_meas: bme280_multibus::CtrlMeas::RESET
-			.set_osrs_t(bme280_multibus::Oversampling::X8)
-			.set_osrs_p(bme280_multibus::Oversampling::X8)
-			.set_mode(bme280_multibus::Mode::Normal),
-		ctrl_hum: bme280_multibus::Oversampling::X8,
+	const SETTINGS: bme280::Settings = bme280::Settings {
+		config: bme280::Config::RESET
+			.set_standby_time(bme280::Standby::Millis125)
+			.set_filter(bme280::Filter::X8),
+		ctrl_meas: bme280::CtrlMeas::RESET
+			.set_osrs_t(bme280::Oversampling::X8)
+			.set_osrs_p(bme280::Oversampling::X8)
+			.set_mode(bme280::Mode::Normal),
+		ctrl_hum: bme280::Oversampling::X8,
 	};
 	let mut bme280 =
-		bme280_multibus::Bme280::from_i2c0(i2c, bme280_multibus::Address::SdoGnd).unwrap();
+		bme280::Bme280::from_i2c0(i2c, bme280::Address::SdoGnd).unwrap();
 	bme280.reset().unwrap();
 	delay_ms(20);
 	bme280.settings(&SETTINGS).unwrap();

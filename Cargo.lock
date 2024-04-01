@@ -221,10 +221,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf4b9d6a944f767f8e5e0db018570623c85f3d925ac718db4e06d0187adb21c1"
 
 [[package]]
-name = "bme280-multibus"
+name = "bme280"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "658e012a6ce0784450ff5e3ee0187a557b81fcd048c971bd4a3c53e5c145dabd"
+source = "git+https://github.com/rubend056/bme280.git#fd4454e9239c040a848c237539ca5bf53bc5e82a"
 dependencies = [
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
@@ -1262,7 +1261,7 @@ version = "0.1.0"
 dependencies = [
  "arduino-hal",
  "avr-device",
- "bme280-multibus",
+ "bme280",
  "dht11",
  "either",
  "embedded-hal 1.0.0",

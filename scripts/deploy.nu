@@ -1,7 +1,13 @@
 export def build [board, bin] {
     let root = $env.PWD
+    let args = [
+        #"-Zlocation-detail=none",
+        "-Zunstable-options",
+        "-Zbuild-std-features=panic_immediate_abort",
+        "--out-dir",$"($root)/out/($board)"
+    ]
     enter $"boards/($board)"
-        cargo build --release -Zunstable-options --out-dir $"($root)/out/($board)" --bin $bin
+        cargo build ...$args --release --bin $bin
 }
 def get_avrdude_mega [board] {
     enter $"boards/($board)"
