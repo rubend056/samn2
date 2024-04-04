@@ -31,10 +31,11 @@
 #	1			Clock Source 1					1
 #	0			Clock Source 0					0
 
-
+# Turn on a bit/feature (setting it to 0)
 def bit_on [v,bit] {
     $v | bits and (0b[1] | bits shl $bit| bits not)
 }
+# Turn off a bit/feature (setting it to 1)
 def bit_off [v,bit] {
     $v | bits or (0b[1] | bits shl $bit)
 }
@@ -48,8 +49,16 @@ def fuse_config_samn_v9 [] {
     
     # Enable brown out detector for 2.7V
     $ext = (bit_on $ext 1)
+    # Enable clock failure detection
+    $ext = (bit_off $ext 3)
+
     # Don't divide clock by 8 internally
     $low = (bit_off $low 7)
+    # Enable eeprom preserve
+    $high = (bit_on $high 3)
+    
+    # Use external 16Mhz clock (definitely)
+    # $low = (bit_off (bit_off $low 3) 2)
 
     [$ext $high $low]
 }
@@ -68,11 +77,20 @@ def fuse_config_samn_v8 [] {
 
     [$ext $high $low]
 }
+def fuse_config_uno [] {
+    # atmega328p defaults
+    mut ext = 0b[1111 1111]
+    mut high = 0b[1101 1001]
+    mut low = 0b[0110 0010]
+
+
+}
 export def fuse_samn_v9 [] {
     let fuses = fuse_config_samn_v9
     let args = [
         "-p" "m328pb"
         "-c" "usbasp"
+        "-B" "50kHz"
         "-U" $"efuse:w:0x($fuses | get 0 | encode hex):m"
         "-U" $"hfuse:w:0x($fuses | get 1 | encode hex):m"
         "-U" $"lfuse:w:0x($fuses | get 2 | encode hex):m"

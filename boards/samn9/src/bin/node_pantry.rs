@@ -17,8 +17,7 @@ use panic_halt as _;
 // use samn2::radio::Radio;
 use samn_common::{
 	node::{
-		Actuator, Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response,
-		Sensor, LIMBS_MAX,
+		Actuator, Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response, Sensor, LIMBS_MAX,
 	},
 	radio::*,
 };
@@ -58,7 +57,15 @@ fn main() -> ! {
 	let dp = arduino_hal::Peripherals::take().unwrap();
 	let pins = arduino_hal::pins!(dp);
 
-	const NODE_ID: u16 = 22;
+	let mut node_addr = 0xe7e7u16;
+	let node_id;
+	{
+		// Get id from EEPROM
+		let eeprom = arduino_hal::Eeprom::new(dp.EEPROM);
+		let mut bytes = [0u8; 4];
+		eeprom.read(0, &mut bytes).unwrap();
+		node_id = u32::from_le_bytes(bytes);
+	}
 	let node_info: NodeInfo = NodeInfo {
 		name: "Pantry".into(),
 		board: Board::SamnV9,
@@ -85,10 +92,10 @@ fn main() -> ! {
 			..Default::default()
 		},
 	);
-	let spi =
-		embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.csn.into_output(), Delay::new());
+	let spi = embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.csn.into_output(), Delay::new());
 	let mut radio = NRF24L01::new(pins.g2_ce.into_output(), spi).unwrap();
 	radio.configure().unwrap();
+	radio.set_rx_filter(&[node_addr]).unwrap();
 
 	// Bme280
 	let i2c = arduino_hal::i2c::I2c0::new(
@@ -108,8 +115,7 @@ fn main() -> ! {
 			.set_mode(bme280::Mode::Normal),
 		ctrl_hum: bme280::Oversampling::X8,
 	};
-	let mut bme280 =
-		bme280::Bme280::from_i2c0(i2c, bme280::Address::SdoGnd).unwrap();
+	let mut bme280 = bme280::Bme280::from_i2c0(i2c, bme280::Address::SdoGnd).unwrap();
 	bme280.reset().unwrap();
 	delay_ms(20);
 	bme280.settings(&SETTINGS).unwrap();
@@ -138,9 +144,7 @@ fn main() -> ! {
 			},
 		))
 		.unwrap();
-	limbs
-		.push(Limb(1, LimbType::Actuator(Actuator::Light(false))))
-		.unwrap();
+	limbs.push(Limb(1, LimbType::Actuator(Actuator::Light(false)))).unwrap();
 	limbs
 		.push(Limb(
 			2,
@@ -158,71 +162,90 @@ fn main() -> ! {
 	let mut actuator_update_flag = true;
 
 	let mut irq = pins.g0_irq;
+	let mut looking_for_network = true;
 	loop {
 		{
 			let now = interrupt::free(|cs| SECONDS.borrow(cs).get());
-			// Here we check if sensors need to report anything
-			// Depending on the report interval of each sensor
-			let mut limbs_reporting = Limbs::new();
+			if looking_for_network {
+				if now >= last_heartbeat + 10 {
+					// Blink twice
+					led.toggle();
+					delay_ms(50);
+					led.toggle();
+					delay_ms(100);
+					led.toggle();
+					delay_ms(50);
+					led.toggle();
+					delay_ms(100);
 
-			for limb in limbs.iter_mut() {
-				if let LimbType::Sensor {
-					report_interval,
-					data,
-				} = &mut limb.1
-				{
-					// Check if it's our time to report, using report_interval
-					if sensor_last_report
-						.get(&limb.0)
-						.map(|last| now >= *last + (*report_interval as u32))
-						.unwrap_or(true)
-					{
-						if limb.0 == 0 {
-							// Set limb ID 0 as Battery
-							*data = Some(Sensor::Battery(
-								// turning adc reading into correct AA battery percentage
-								((max(min(bat_pin.analog_read(&mut adc), 500), 300) - 300) / 2)
-									// (bat_pin.analog_read(&mut adc)/4)
-									.try_into()
-									.unwrap(),
-							));
-						} else if limb.0 == 2 {
-							// Set limb ID 2 as BME280
-							let measurement = bme280.sample().unwrap();
-							*data = Some(Sensor::TempHum((
-								measurement.temperature.try_into().unwrap(),
-								measurement.humidity.try_into().unwrap(),
-							)));
+					// Send looking for network
+					
+					radio
+						.transmit_(&Payload::new_with_addr(
+							&postcard::to_vec::<Message, 32>(&Message::SearchingNetwork(node_id)).unwrap(),
+							node_addr,
+						))
+						.unwrap();
+
+					last_heartbeat = now;
+				}
+			} else {
+				// Here we check if sensors need to report anything
+				// Depending on the report interval of each sensor
+				let mut limbs_reporting = Limbs::new();
+
+				for limb in limbs.iter_mut() {
+					if let LimbType::Sensor { report_interval, data } = &mut limb.1 {
+						// Check if it's our time to report, using report_interval
+						if sensor_last_report
+							.get(&limb.0)
+							.map(|last| now >= *last + (*report_interval as u32))
+							.unwrap_or(true)
+						{
+							if limb.0 == 0 {
+								// Set limb ID 0 as Battery
+								*data = Some(Sensor::Battery(
+									// turning adc reading into correct AA battery percentage
+									((max(min(bat_pin.analog_read(&mut adc), 500), 300) - 300) / 2)
+										// (bat_pin.analog_read(&mut adc)/4)
+										.try_into()
+										.unwrap(),
+								));
+							} else if limb.0 == 2 {
+								// Set limb ID 2 as BME280
+								let measurement = bme280.sample().unwrap();
+								*data = Some(Sensor::TempHum((
+									measurement.temperature.try_into().unwrap(),
+									measurement.humidity.try_into().unwrap(),
+								)));
+							}
+							limbs_reporting.push(limb.clone()).ok();
+							sensor_last_report.insert(limb.0, now).unwrap();
 						}
-						limbs_reporting.push(limb.clone()).ok();
-						sensor_last_report.insert(limb.0, now).unwrap();
 					}
 				}
-			}
 
-			// Only send if there's any sensor to report
-			// Or we have a hearbeat due
-			if limbs_reporting.len() > 0 || now >= last_heartbeat + 10 {
-				let message = Message {
-					id: NODE_ID,
-					data: MessageData::Response {
+				// Only send if there's any sensor to report
+				// Or we have a hearbeat due
+				if limbs_reporting.len() > 0 || now >= last_heartbeat + 10 {
+					let message = Message::Message(MessageData::Response {
 						id: None,
 						response: if limbs_reporting.len() > 0 {
 							Response::Limbs(limbs_reporting)
 						} else {
 							Response::Heartbeat(now)
 						},
-					},
-				};
-				let data: Vec<u8, 32> = postcard::to_vec(&message).unwrap();
+					});
+					let data: Vec<u8, 32> = postcard::to_vec(&message).unwrap();
 
-				// Indicate we are sending
-				led.toggle();
-				delay_ms(100);
-				led.toggle();
+					// Indicate we are sending
+					led.toggle();
+					delay_ms(100);
+					led.toggle();
 
-				radio.transmit_(&Payload::new(&data)).unwrap();
-				last_heartbeat = now;
+					radio.transmit_(&Payload::new_with_addr(&data, node_addr)).unwrap();
+					last_heartbeat = now;
+				}
 			}
 		}
 
@@ -231,80 +254,80 @@ fn main() -> ! {
 			let mut i = 0u8;
 			radio.rx().unwrap();
 			while i < u8::MAX {
-				if let Ok(payload) = radio.receive_(&mut irq) {
+				if let Ok(message) = radio
+					.receive_(&mut irq, Some(&[node_addr]))
+					.map(|payload| postcard::from_bytes::<Message>(payload.data()).unwrap())
+				{
 					// If commands heard, answer them
-					{
+					if looking_for_network {
+						if let Message::Network(node_id_in, node_addr_in) = message {
+							if node_id_in == node_id {
+								node_addr = node_addr_in;
+								radio.set_rx_filter(&[node_addr]).unwrap();
+								looking_for_network = false;
+								led.toggle();
+								delay_ms(50);
+								led.toggle();
+							}
+						}
+					} else {
 						// Answer command
-						let message: Message = postcard::from_bytes(payload.data()).unwrap();
-						match message.data {
-							MessageData::Command { id, command } => {
-								let data = postcard::to_vec::<_, 32>(&Message {
-									id: NODE_ID,
-									data: MessageData::Response {
-										id: Some(id),
-										response: match command {
-											Command::Info => Response::Info(node_info.clone()),
-											Command::Limbs => Response::Limbs(limbs.clone()),
-											Command::SetLimb(limb_in) => {
-												if let Some(limb) = limbs
-													.iter_mut()
-													.find(|limb| limb.0 == limb_in.0)
-												{
-													if variant_eq(&limb.1, &limb_in.1) {
-														match (&mut limb.1, limb_in.1) {
-															(
-																LimbType::Actuator(actuator),
-																LimbType::Actuator(actuator_in),
-															) => {
-																if variant_eq(
-																	actuator,
-																	&actuator_in,
-																) {
-																	*actuator = actuator_in;
-																	actuator_update_flag = true;
 
-																	// Send limbs again
-																	Response::Limbs(limbs.clone())
-																	// Response::Ok
-																} else {
-																	Response::ErrLimbTypeDoesntMatch
-																}
-															}
+						match message {
+							Message::Message(MessageData::Command { id, command }) => {
+								let data = postcard::to_vec::<_, 32>(&Message::Message(MessageData::Response {
+									id: Some(id),
+									response: match command {
+										Command::Info => Response::Info(node_info.clone()),
+										Command::Limbs => Response::Limbs(limbs.clone()),
+										Command::SetLimb(limb_in) => {
+											if let Some(limb) = limbs.iter_mut().find(|limb| limb.0 == limb_in.0) {
+												if variant_eq(&limb.1, &limb_in.1) {
+													match (&mut limb.1, limb_in.1) {
+														(LimbType::Actuator(actuator), LimbType::Actuator(actuator_in)) => {
+															if variant_eq(actuator, &actuator_in) {
+																*actuator = actuator_in;
+																actuator_update_flag = true;
 
-															(
-																LimbType::Sensor {
-																	report_interval,
-																	data: _,
-																},
-																LimbType::Sensor {
-																	report_interval:
-																		report_interval_in,
-																	data: _,
-																},
-															) => {
-																*report_interval =
-																	report_interval_in;
-																
 																// Send limbs again
 																Response::Limbs(limbs.clone())
-																// Response::Ok
+															// Response::Ok
+															} else {
+																Response::ErrLimbTypeDoesntMatch
 															}
-															_ => Response::ErrLimbTypeDoesntMatch,
 														}
-													} else {
-														Response::ErrLimbTypeDoesntMatch
+
+														(
+															LimbType::Sensor {
+																report_interval,
+																data: _,
+															},
+															LimbType::Sensor {
+																report_interval: report_interval_in,
+																data: _,
+															},
+														) => {
+															*report_interval = report_interval_in;
+
+															// Send limbs again
+															Response::Limbs(limbs.clone())
+															// Response::Ok
+														}
+														_ => Response::ErrLimbTypeDoesntMatch,
 													}
 												} else {
-													Response::ErrLimbNotFound
+													Response::ErrLimbTypeDoesntMatch
 												}
+											} else {
+												Response::ErrLimbNotFound
 											}
-											_ => Default::default(),
-										},
+										} // _ => Default::default(),
 									},
-								})
+								}))
 								.unwrap();
+
 								radio.ce_disable(); // Stop rx
-								radio.transmit_(&Payload::new(&data)).unwrap(); // Send sets tx, sends
+								radio.transmit_(&Payload::new_with_addr(&data, node_addr)).unwrap(); // Send sets tx, sends
 								radio.rx().unwrap(); // Back to rx
 								i = 0; // Reset timeout counter
 							}

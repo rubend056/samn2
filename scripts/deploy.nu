@@ -21,3 +21,29 @@ export def run [board, bin] {
     enter $"boards/($board)"
         cargo run --release --bin $bin
 }
+
+export def burn_new_id [] {
+    if not ("ids.json" | path exists) {
+        # [] | save ids.json
+        print "We couldn't find ids.json"
+        print "We could make a new file"
+        print "But then you wouldn't know we couldn't find it"
+        print "So we're erring on the side of caution and exiting"
+        exit
+    }
+    mut ids = open ids.json
+    
+    # Generate a new id
+    mut id = (random int 0..4294967295)
+    while $id in $ids {
+        $id = (random int 0..4294967295)
+    }
+    
+    $ids = ($ids | append $id)
+    # Int -> binary (8 bytes) -> get first 2 bytes -> reverse so the hex encoding is big endian 
+    # (as it should, so avrdude can then turn it to little endian back again)
+    let hex = ($id | into binary | bytes at 0..4 | bytes reverse | encode hex)
+    avrdude -p m328pb -c usbasp -U $"eeprom:w:0x($hex):m"
+
+    $ids | save -f ids.json
+}
