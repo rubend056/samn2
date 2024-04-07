@@ -2,19 +2,11 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-use core::{
-	cell::Cell,
-	cmp::{max, min},
-	fmt::Debug,
-};
+use core::cmp::{max, min};
 
-use arduino_hal::{delay_ms, delay_us, hal::wdt, spi, Delay};
-use avr_device::interrupt::{self, Mutex};
+use arduino_hal::{delay_ms, hal::wdt, spi, Delay};
 use embedded_hal::spi::Mode;
 use samn_common::nrf24::NRF24L01;
-// use panic_serial as _;
-// extern crate panic_serial;
-// extern crate panic_halt;
 
 use samn_common::{
 	node::{
@@ -23,120 +15,7 @@ use samn_common::{
 	radio::*,
 };
 
-const WATCHDOG_TIMEOUT: wdt::Timeout = wdt::Timeout::Ms8000;
-const WDT_SECONDS_INCREASE: u32 = 8;
-const SEARCH_NETWORK_INTERVAL: u32 = 8;
-const HEARTBEAT_INTERVAL: u16 = 60;
-
-// panic_serial::impl_panic_handler!(
-//     // This is the type of the UART port to use for printing the message:
-//     arduino_hal::usart::Usart<
-//       arduino_hal::pac::USART0,
-//       arduino_hal::port::Pin<arduino_hal::port::mode::Input, arduino_hal::hal::port::PD0>,
-//       arduino_hal::port::Pin<arduino_hal::port::mode::Output, arduino_hal::hal::port::PD1>
-//     >
-// );
-
-/// Compares only the Enum types, not the values
-fn variant_eq<T>(a: &T, b: &T) -> bool {
-	core::mem::discriminant(a) == core::mem::discriminant(b)
-}
-
-/// This is able to count up to 136 years.
-static SECONDS: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
-
-#[avr_device::interrupt(atmega328pb)]
-fn WDT() {
-	// We do nothing, this is just so interrupt vector is set
-	// and device doesn't self reset, just wakes up
-	// return;
-
-	// Actually we'll use this as our timer
-	avr_device::interrupt::free(|cs| {
-		let seconds = SECONDS.borrow(cs);
-		seconds.set(seconds.get() + WDT_SECONDS_INCREASE);
-	})
-}
-#[avr_device::interrupt(atmega328pb)]
-fn INT1() { // This corresponds to the irq pin on nrf24
-	          // We do nothing, this is just so interrupt vector is set
-}
-
-use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering};
-
-fn acknowlege_and_disable_watchdog() {
-	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
-	// Clear watchdog flag
-	dp.CPU.mcusr.modify(|_, s| s.wdrf().clear_bit());
-	// Write logical one to WDCE and WDE
-	dp.WDT.wdtcsr.modify(|_, w| w.wdce().set_bit().wde().set_bit());
-	// Turn off watchdog
-	dp.WDT.wdtcsr.write(|w| unsafe { w.bits(0) });
-}
-
-#[inline(never)]
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-	// Disable interrupts
-	avr_device::interrupt::disable();
-	acknowlege_and_disable_watchdog();
-
-	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
-	let pins = arduino_hal::pins!(dp);
-	let mut led = pins.led.into_output();
-
-	loop {
-		atomic::compiler_fence(Ordering::SeqCst);
-		led.toggle();
-		delay_ms(500);
-		led.toggle();
-		delay_ms(500);
-	}
-}
-
-fn now() -> u32 {
-	interrupt::free(|cs| SECONDS.borrow(cs).get())
-}
-
-fn en_wdi_and_pd() {
-	// A little stealing so we can set some low level registers
-	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
-	// Enable watchdog timer as an interrupt
-	dp.WDT.wdtcsr.modify(|_, w| w.wdie().set_bit());
-	// Enable sleep, set mode to power-down
-	dp.CPU.smcr.modify(|_, w| w.se().set_bit().sm().pdown());
-	unsafe {
-		// Enable interrupts
-		avr_device::interrupt::enable();
-		// Sleep
-		avr_device::asm::sleep();
-	}
-}
-fn check_for_messages_for_a_bit<E: Debug, R: Radio<E>, P: embedded_hal::digital::InputPin>(
-	radio: &mut R,
-	irq: &mut P,
-) -> Option<Message> {
-	radio.to_rx().unwrap();
-	let mut i = 0u8;
-
-	// >= 150 ms wait
-	while i < u8::MAX {
-		if let Ok(message) = radio
-			.receive(irq, None)
-			.map(|payload| postcard::from_bytes::<Message>(payload.data()).unwrap())
-		{
-			// radio.to_idle().unwrap();
-			return Some(message);
-		}
-		i += 1;
-		delay_us(500);
-	}
-	// radio.to_idle().unwrap();
-	None
-}
-
-const DELAY: u16 = 50;
+use samn9::*;
 
 #[arduino_hal::entry]
 fn main() -> ! {
@@ -146,12 +25,13 @@ fn main() -> ! {
 	// 16ms allowing only the next few lines of code to execute :(
 	// That's why we were seeing a neverending blinking light
 	// This took me 2 days to figure out
+	// Only do this after Peripherals::take, or take will Panic
 	acknowlege_and_disable_watchdog();
 
 	// Led
 	let mut led = pins.led.into_output();
 	led.toggle();
-	delay_ms(DELAY);
+	delay_ms(LED_DELAY);
 	led.toggle();
 
 	let mut node_addr = 0x9797u16;
@@ -197,12 +77,6 @@ fn main() -> ! {
 		radio = NRF24L01::new(pins.g2_ce.into_output(), spi).unwrap();
 		radio.configure().unwrap();
 		radio.set_rx_filter(&[addr_to_rx_pipe(node_addr)]).unwrap();
-
-		// // Setting up interrupt for nrf24
-		// // Configure INT1 for falling edge. 0x03 would be rising edge.
-		// dp.EXINT.eicra.modify(|_, w| w.isc1().bits(0x02));
-		// // Enable the INT1 interrupt source.
-		// dp.EXINT.eimsk.modify(|_, w| w.int1().set_bit());
 	}
 
 	let mut last_message: u32 = 0;
@@ -221,16 +95,16 @@ fn main() -> ! {
 			if now >= last_message + SEARCH_NETWORK_INTERVAL {
 				// Blink twice
 				led.toggle();
-				delay_ms(DELAY);
+				delay_ms(LED_DELAY);
 				led.toggle();
 
-				delay_ms(DELAY);
+				delay_ms(LED_DELAY);
 
 				led.toggle();
-				delay_ms(DELAY);
+				delay_ms(LED_DELAY);
 				led.toggle();
 
-				delay_ms(DELAY);
+				delay_ms(LED_DELAY);
 
 				// Send looking for network
 				radio
@@ -247,7 +121,7 @@ fn main() -> ! {
 						node_addr = node_addr_in;
 						radio.set_rx_filter(&[addr_to_rx_pipe(node_addr)]).unwrap();
 						led.toggle();
-						delay_ms(DELAY);
+						delay_ms(LED_DELAY);
 						led.toggle();
 						break; // We got a valid address, get out of this loop
 					}
@@ -342,9 +216,6 @@ fn main() -> ! {
 		}
 		updated
 	};
-
-	// let mut update_actuators = |limbs:&Limbs, led: &mut Pin<Output, PD4>| {
-	// };
 
 	loop {
 		// Sensor / heartbeat / commands / acuators loop
