@@ -109,17 +109,14 @@ fn main() -> ! {
 	loop {
 		delay_ms(10);
 		if let Ok(v) = serial.read() {
-			if v == 116 {
-				// t
-
+			if v == b't' {
 				if nrf24.send(b"Hello").unwrap() {
 					ufmt::uwriteln!(&mut serial, "sent {}!\r", t).unwrap_infallible();
 					t += 1;
 				} else {
 					ufmt::uwriteln!(&mut serial, "send failed\r").unwrap_infallible();
 				}
-			} else if v == 114 {
-				//r
+			} else if v == b'r' {
 				nrf24.rx().unwrap();
 				ufmt::uwriteln!(&mut serial, "receiving, press r to go back\r").unwrap_infallible();
 
@@ -136,7 +133,7 @@ fn main() -> ! {
 					delay_ms(100);
 				}
 				nrf24.ce_disable();
-			} else if v == 112 {
+			} else if v == b'p' {
 				let mut a = |i| {
 					let w = [i; 1];
 					let mut r = [0x00; 6];

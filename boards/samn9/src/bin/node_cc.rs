@@ -4,14 +4,15 @@
 
 use core::cmp::{max, min};
 
+use arduino_hal::prelude::_unwrap_infallible_UnwrapInfallible;
 use arduino_hal::{delay_ms, hal::wdt, spi, Delay};
-use embedded_hal::spi::Mode;
 use samn9::mypanic::maybe_init_serial_panic;
-use samn_common::nrf24::NRF24L01;
+use samn_common::cc1101::Cc1101;
 
+use samn_common::node::Actuator;
 use samn_common::{
 	node::{
-		Actuator, Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response, Sensor, LIMBS_MAX,
+		Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response, Sensor, LIMBS_MAX,
 	},
 	radio::*,
 };
@@ -32,7 +33,7 @@ fn main() -> ! {
 	// Led
 	let mut led = pins.led.into_output();
 	led.toggle();
-	delay_ms(LED_OFF_MS);
+	delay_ms(LED_ON_MS);
 	led.toggle();
 
 	let mut node_addr = 0x9797u16;
@@ -45,12 +46,11 @@ fn main() -> ! {
 
 	// Watchdog timer
 	let mut watchdog = wdt::Wdt::new(dp.WDT, &dp.CPU.mcusr);
-	// Start watchdog :) , operations shouldn't take longer than 2sec.
 	watchdog.start(WATCHDOG_TIMEOUT).unwrap();
 
 	// Radio
 	let mut radio;
-	let mut irq = pins.g0_irq;
+	let mut g2 = pins.g2_ce;
 	{
 		let (spi, _) = arduino_hal::Spi::new(
 			dp.SPI0,
@@ -59,17 +59,14 @@ fn main() -> ! {
 			pins.b4.into_pull_up_input(),
 			pins.b2.into_output(),
 			spi::Settings {
-				mode: Mode {
-					polarity: embedded_hal::spi::Polarity::IdleLow,
-					phase: embedded_hal::spi::Phase::CaptureOnFirstTransition,
-				},
+				mode: embedded_hal::spi::MODE_0,
 				clock: spi::SerialClockRate::OscfOver2,
-				..Default::default()
+				data_order: spi::DataOrder::MostSignificantFirst,
 			},
 		);
 		let spi = embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.csn.into_output(), Delay::new());
-		radio = NRF24L01::new(pins.g2_ce.into_output(), spi).unwrap();
-		radio.configure().unwrap();
+		radio = Cc1101::new(spi).unwrap();
+		radio.init(&mut arduino_hal::Delay::new()).unwrap();
 		radio.set_rx_filter(&[addr_to_rx_pipe(node_addr)]).unwrap();
 	}
 
@@ -89,28 +86,31 @@ fn main() -> ! {
 			if now >= last_message + SEARCH_NETWORK_INTERVAL {
 				// Blink twice
 				led.toggle();
-				delay_ms(LED_OFF_MS);
+				delay_ms(LED_ON_MS);
 				led.toggle();
 
 				delay_ms(LED_OFF_MS);
 
 				led.toggle();
-				delay_ms(LED_OFF_MS);
+				delay_ms(LED_ON_MS);
 				led.toggle();
 
 				delay_ms(LED_OFF_MS);
+				
 
 				// Send looking for network
-				radio
-					.transmit(&Payload::new_with_addr(
+				Radio::transmit(
+					&mut radio,
+					&Payload::new_with_addr(
 						&postcard::to_vec::<Message, 32>(&Message::SearchingNetwork(node_id)).unwrap(),
 						node_addr,
-						addr_to_nrf24_hq_pipe(node_addr),
-					))
-					.unwrap();
+						addr_to_cc1101_hq_pipe(node_addr),
+					),
+				)
+				.unwrap();
 				last_message = now;
 
-				if let Some(Message::Network(node_id_in, node_addr_in)) = check_for_messages_for_a_bit(&mut radio, &mut irq) {
+				if let Some(Message::Network(node_id_in, node_addr_in)) = check_for_messages_for_a_bit(&mut radio, &mut g2) {
 					if node_id_in == node_id {
 						node_addr = node_addr_in;
 						radio.set_rx_filter(&[addr_to_rx_pipe(node_addr)]).unwrap();
@@ -126,6 +126,8 @@ fn main() -> ! {
 			en_wdi_and_pd();
 		}
 	}
+
+	
 
 	// Battery
 	let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
@@ -146,48 +148,10 @@ fn main() -> ! {
 			},
 		)),
 		Some(Limb(1, LimbType::Actuator(Actuator::Light(false)))),
-		Some(Limb(
-			2,
-			LimbType::Sensor {
-				report_interval: 60 * 5,
-				data: None,
-			},
-		)),
+		None
 	];
-
-	
-	// Bme280
-	let mut bme280;
-	{
-		let i2c = arduino_hal::i2c::I2c0::new(
-			dp.TWI0,
-			pins.c4.into_pull_up_input(),
-			pins.c5.into_pull_up_input(),
-			50_000,
-		);
-		const SETTINGS: bme280::Settings = bme280::Settings {
-			config: bme280::Config::RESET
-				.set_standby_time(bme280::Standby::Millis125)
-				.set_filter(bme280::Filter::X8),
-			ctrl_meas: bme280::CtrlMeas::RESET
-				.set_osrs_t(bme280::Oversampling::X8)
-				.set_osrs_p(bme280::Oversampling::X8)
-				.set_mode(bme280::Mode::Normal),
-			ctrl_hum: bme280::Oversampling::X8,
-		};
-		bme280 = bme280::Bme280::from_i2c0(i2c, bme280::Address::SdoGnd).unwrap();
-		bme280.reset().ok();
-		delay_ms(20);
-		bme280.settings(&SETTINGS).ok();
-		delay_ms(1000);
-	}
-	let mut temperature_humidity = || -> (i16, u8) {
-		let measurement = bme280.sample().unwrap();
-		(
-			measurement.temperature.try_into().unwrap(),
-			measurement.humidity.try_into().unwrap(),
-		)
-	};
+	let mut light_pin = pins.b0.into_output();
+	light_pin.set_low();
 
 	// Sensor Id -> last_report_time
 	let mut sensor_last_report = [0u32; LIMBS_MAX];
@@ -201,7 +165,6 @@ fn main() -> ! {
 				if *now >= sensor_last_report[*limb_id as usize] + (*report_interval as u32) {
 					match *limb_id {
 						0 => *data = Some(Sensor::Battery(battery_percentage())),
-						2 => *data = Some(Sensor::TempHum(temperature_humidity())),
 						_ => {}
 					}
 					sensor_last_report[*limb_id as usize] = *now;
@@ -234,19 +197,17 @@ fn main() -> ! {
 
 				// Indicate we are sending
 				led.toggle();
-				radio
-					.transmit(&Payload::new_with_addr(
-						&data,
-						node_addr,
-						addr_to_nrf24_hq_pipe(node_addr),
-					))
-					.unwrap();
+				Radio::transmit(
+					&mut radio,
+					&Payload::new_with_addr(&data, node_addr, addr_to_cc1101_hq_pipe(node_addr)),
+				)
+				.unwrap();
 				led.toggle();
 				last_message = now;
 
 				// Listen for commands for >=76ms, reset counter if command received
 				while let Some(Message::Message(MessageData::Command { id, command })) =
-					check_for_messages_for_a_bit(&mut radio, &mut irq)
+					check_for_messages_for_a_bit(&mut radio, &mut g2)
 				{
 					// Answer command
 					let message = Message::Message(MessageData::Response {
@@ -265,15 +226,16 @@ fn main() -> ! {
 											(LimbType::Actuator(actuator), LimbType::Actuator(actuator_in)) => {
 												if variant_eq(actuator, &actuator_in) {
 													*actuator = actuator_in;
+
 													// Updating actuators
 													for limb in limbs.iter() {
 														if let Some(Limb(limb_id, LimbType::Actuator(actuator))) = limb {
 															match (*limb_id, actuator) {
 																(1, Actuator::Light(value)) => {
 																	if *value {
-																		led.set_high();
+																		light_pin.set_high();
 																	} else {
-																		led.set_low();
+																		light_pin.set_low();
 																	}
 																}
 																_ => {}
@@ -321,13 +283,11 @@ fn main() -> ! {
 					let data = postcard::to_slice(&message, &mut data).unwrap();
 
 					led.toggle();
-					radio
-						.transmit(&Payload::new_with_addr(
-							&data,
-							node_addr,
-							addr_to_nrf24_hq_pipe(node_addr),
-						))
-						.unwrap(); // Send sets tx, sends
+					Radio::transmit(
+						&mut radio,
+						&Payload::new_with_addr(&data, node_addr, addr_to_cc1101_hq_pipe(node_addr)),
+					)
+					.unwrap(); // Send sets tx, sends
 					led.toggle();
 				}
 			}

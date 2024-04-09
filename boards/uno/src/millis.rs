@@ -11,13 +11,13 @@ use core::cell;
 // ║      1024 ║          125 ║              8 ms ║
 // ║      1024 ║          250 ║             16 ms ║
 // ╚═══════════╩══════════════╩═══════════════════╝
-const PRESCALER: u32 = 1024;
-const TIMER_COUNTS: u32 = 125;
+const PRESCALER: u32 = 64;
+const TIMER_COUNTS: u32 = 250;
 const MILLIS_INCREMENT: u32 = PRESCALER * TIMER_COUNTS / 16000; // Overflows in 19 hours
 
 static MILLIS_COUNTER: avr_device::interrupt::Mutex<cell::Cell<u32>> =
     avr_device::interrupt::Mutex::new(cell::Cell::new(0));
-static mut MILLIS_STARTED: bool = false;
+// static mut MILLIS_STARTED: bool = false;
 
 pub fn millis_init(tc0: arduino_hal::pac::TC0) {
     // Configure the timer for the above interval (in CTC mode)
@@ -37,7 +37,7 @@ pub fn millis_init(tc0: arduino_hal::pac::TC0) {
     avr_device::interrupt::free(|cs| {
         MILLIS_COUNTER.borrow(cs).set(0);
     });
-    unsafe {MILLIS_STARTED = true};
+    // unsafe {MILLIS_STARTED = true};
 }
 
 #[avr_device::interrupt(atmega328p)]
@@ -50,6 +50,6 @@ fn TIMER0_COMPA() {
 }
 
 pub fn millis() -> u32 {
-    if unsafe { !MILLIS_STARTED } {panic!("Using millis without init");}
+    // if unsafe { !MILLIS_STARTED } {panic!("Using millis without init");}
     avr_device::interrupt::free(|cs| MILLIS_COUNTER.borrow(cs).get())
 }

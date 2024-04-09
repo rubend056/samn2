@@ -1,5 +1,4 @@
 #![no_std]
-
 #![feature(abi_avr_interrupt)]
 
 use core::{
@@ -10,8 +9,8 @@ use core::{
 
 use arduino_hal::{delay_ms, delay_us, hal::wdt};
 use avr_device::interrupt::{self, Mutex};
-// extern crate panic_serial;
-// extern crate panic_halt;
+
+pub mod mypanic;
 
 use samn_common::{
 	node::{
@@ -24,16 +23,10 @@ pub const WATCHDOG_TIMEOUT: wdt::Timeout = wdt::Timeout::Ms8000;
 pub const WDT_SECONDS_INCREASE: u32 = 8;
 pub const SEARCH_NETWORK_INTERVAL: u32 = 8;
 pub const HEARTBEAT_INTERVAL: u16 = 60;
-pub const LED_DELAY: u16 = 50;
+pub const LED_ON_MS: u16 = 50;
+pub const LED_OFF_MS: u16 = 50;
 
-// panic_serial::impl_panic_handler!(
-//     // This is the type of the UART port to use for printing the message:
-//     arduino_hal::usart::Usart<
-//       arduino_hal::pac::USART0,
-//       arduino_hal::port::Pin<arduino_hal::port::mode::Input, arduino_hal::hal::port::PD0>,
-//       arduino_hal::port::Pin<arduino_hal::port::mode::Output, arduino_hal::hal::port::PD1>
-//     >
-// );
+
 
 /// Compares only the Enum types, not the values
 pub fn variant_eq<T>(a: &T, b: &T) -> bool {
@@ -56,9 +49,6 @@ fn WDT() {
 	})
 }
 
-use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering};
-
 pub fn acknowlege_and_disable_watchdog() {
 	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
 	// Clear watchdog flag
@@ -67,26 +57,6 @@ pub fn acknowlege_and_disable_watchdog() {
 	dp.WDT.wdtcsr.modify(|_, w| w.wdce().set_bit().wde().set_bit());
 	// Turn off watchdog
 	dp.WDT.wdtcsr.write(|w| unsafe { w.bits(0) });
-}
-
-#[inline(never)]
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-	// Disable interrupts
-	avr_device::interrupt::disable();
-	acknowlege_and_disable_watchdog();
-
-	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
-	let pins = arduino_hal::pins!(dp);
-	let mut led = pins.led.into_output();
-
-	loop {
-		atomic::compiler_fence(Ordering::SeqCst);
-		led.toggle();
-		delay_ms(500);
-		led.toggle();
-		delay_ms(500);
-	}
 }
 
 pub fn now() -> u32 {
@@ -123,10 +93,9 @@ pub fn check_for_messages_for_a_bit<E: Debug, R: Radio<E>, P: embedded_hal::digi
 	irq: &mut P,
 ) -> Option<Message> {
 	radio.to_rx().unwrap();
-	let mut i = 0u8;
 
 	// >= 150 ms wait
-	while i < u8::MAX {
+	for _ in 0..u8::MAX {
 		if let Ok(message) = radio
 			.receive(irq, None)
 			.map(|payload| postcard::from_bytes::<Message>(payload.data()).unwrap())
@@ -134,10 +103,8 @@ pub fn check_for_messages_for_a_bit<E: Debug, R: Radio<E>, P: embedded_hal::digi
 			// radio.to_idle().unwrap();
 			return Some(message);
 		}
-		i += 1;
 		delay_us(500);
 	}
 	// radio.to_idle().unwrap();
 	None
 }
-

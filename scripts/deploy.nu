@@ -3,7 +3,7 @@ export def build [board, bin] {
     let args = [
         #"-Zlocation-detail=none",
         "-Zunstable-options",
-        "-Zbuild-std-features=panic_immediate_abort",
+        #"-Zbuild-std-features=panic_immediate_abort",
         "--out-dir",$"($root)/out/($board)"
     ]
     enter $"boards/($board)"
