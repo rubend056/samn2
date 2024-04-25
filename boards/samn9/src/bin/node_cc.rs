@@ -4,16 +4,13 @@
 
 use core::cmp::{max, min};
 
-use arduino_hal::prelude::_unwrap_infallible_UnwrapInfallible;
 use arduino_hal::{delay_ms, hal::wdt, spi, Delay};
 use samn9::mypanic::maybe_init_serial_panic;
 use samn_common::cc1101::Cc1101;
 
 use samn_common::node::Actuator;
 use samn_common::{
-	node::{
-		Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response, Sensor, LIMBS_MAX,
-	},
+	node::{Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response, Sensor, LIMBS_MAX},
 	radio::*,
 };
 
@@ -27,7 +24,6 @@ fn main() -> ! {
 	// 16ms allowing only the next few lines of code to execute :(
 	// That's why we were seeing a neverending blinking light
 	// This took me 2 days to figure out
-	// Only do this after Peripherals::take, or take will Panic
 	acknowlege_and_disable_watchdog();
 
 	// Led
@@ -96,7 +92,6 @@ fn main() -> ! {
 				led.toggle();
 
 				delay_ms(LED_OFF_MS);
-				
 
 				// Send looking for network
 				Radio::transmit(
@@ -127,8 +122,6 @@ fn main() -> ! {
 		}
 	}
 
-	
-
 	// Battery
 	let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
 	let bat_pin = pins.battery.into_analog_input(&mut adc);
@@ -148,7 +141,7 @@ fn main() -> ! {
 			},
 		)),
 		Some(Limb(1, LimbType::Actuator(Actuator::Light(false)))),
-		None
+		None,
 	];
 	let mut light_pin = pins.b0.into_output();
 	light_pin.set_low();
@@ -177,123 +170,127 @@ fn main() -> ! {
 
 	loop {
 		// Sensor / heartbeat / commands / acuators loop
-		{
-			let now = now();
-			let sensor_updated = update_sensors(&now, &mut limbs);
 
-			// Only send if there's any sensor to report
-			// Or we have a hearbeat due
-			if sensor_updated || now >= last_message + node_info.heartbeat_interval as u32 {
+		let now = now();
+		let sensor_updated = update_sensors(&now, &mut limbs);
+
+		// Only send if there's any sensor to report
+		// Or we have a hearbeat due
+		if sensor_updated || now >= last_message + node_info.heartbeat_interval as u32 {
+			// Give the radio a bit of head start powering back up from sleep
+			radio.wake_up().unwrap();
+
+			let message = Message::Message(MessageData::Response {
+				id: None,
+				response: if sensor_updated {
+					Response::Limbs(limbs.clone())
+				} else {
+					Response::Heartbeat(now)
+				},
+			});
+			let mut data = [0u8; 32];
+			let data = postcard::to_slice(&message, &mut data).unwrap();
+
+			// Indicate we are sending
+			led.toggle();
+			Radio::transmit(
+				&mut radio,
+				&Payload::new_with_addr(&data, node_addr, addr_to_cc1101_hq_pipe(node_addr)),
+			)
+			.unwrap();
+			led.toggle();
+			last_message = now;
+
+			// Listen for commands for >=76ms, reset counter if command received
+			while let Some(Message::Message(MessageData::Command { id, command })) =
+				check_for_messages_for_a_bit(&mut radio, &mut g2)
+			{
+				// Answer command
 				let message = Message::Message(MessageData::Response {
-					id: None,
-					response: if sensor_updated {
-						Response::Limbs(limbs.clone())
-					} else {
-						Response::Heartbeat(now)
+					id: Some(id),
+					response: match command {
+						Command::Info => Response::Info(node_info.clone()),
+						Command::Limbs => Response::Limbs(limbs.clone()),
+						Command::SetLimb(limb_in) => {
+							if let Some(limb) = limbs
+								.iter_mut()
+								.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
+								.find(|limb| limb.0 == limb_in.0)
+							{
+								if variant_eq(&limb.1, &limb_in.1) {
+									match (&mut limb.1, limb_in.1) {
+										(LimbType::Actuator(actuator), LimbType::Actuator(actuator_in)) => {
+											if variant_eq(actuator, &actuator_in) {
+												*actuator = actuator_in;
+
+												// Updating actuators
+												for limb in limbs.iter() {
+													if let Some(Limb(limb_id, LimbType::Actuator(actuator))) = limb {
+														match (*limb_id, actuator) {
+															(1, Actuator::Light(value)) => {
+																if *value {
+																	light_pin.set_high();
+																} else {
+																	light_pin.set_low();
+																}
+															}
+															_ => {}
+														}
+													}
+												}
+
+												// Send limbs again
+												Response::Limbs(limbs.clone())
+											// Response::Ok
+											} else {
+												Response::ErrLimbTypeDoesntMatch
+											}
+										}
+
+										(
+											LimbType::Sensor {
+												report_interval,
+												data: _,
+											},
+											LimbType::Sensor {
+												report_interval: report_interval_in,
+												data: _,
+											},
+										) => {
+											*report_interval = report_interval_in;
+
+											// Send limbs again
+											Response::Limbs(limbs.clone())
+											// Response::Ok
+										}
+										_ => Response::ErrLimbTypeDoesntMatch,
+									}
+								} else {
+									Response::ErrLimbTypeDoesntMatch
+								}
+							} else {
+								Response::ErrLimbNotFound
+							}
+						}
 					},
 				});
+
 				let mut data = [0u8; 32];
 				let data = postcard::to_slice(&message, &mut data).unwrap();
 
-				// Indicate we are sending
 				led.toggle();
 				Radio::transmit(
 					&mut radio,
 					&Payload::new_with_addr(&data, node_addr, addr_to_cc1101_hq_pipe(node_addr)),
 				)
-				.unwrap();
+				.unwrap(); // Send sets tx, sends
 				led.toggle();
-				last_message = now;
-
-				// Listen for commands for >=76ms, reset counter if command received
-				while let Some(Message::Message(MessageData::Command { id, command })) =
-					check_for_messages_for_a_bit(&mut radio, &mut g2)
-				{
-					// Answer command
-					let message = Message::Message(MessageData::Response {
-						id: Some(id),
-						response: match command {
-							Command::Info => Response::Info(node_info.clone()),
-							Command::Limbs => Response::Limbs(limbs.clone()),
-							Command::SetLimb(limb_in) => {
-								if let Some(limb) = limbs
-									.iter_mut()
-									.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
-									.find(|limb| limb.0 == limb_in.0)
-								{
-									if variant_eq(&limb.1, &limb_in.1) {
-										match (&mut limb.1, limb_in.1) {
-											(LimbType::Actuator(actuator), LimbType::Actuator(actuator_in)) => {
-												if variant_eq(actuator, &actuator_in) {
-													*actuator = actuator_in;
-
-													// Updating actuators
-													for limb in limbs.iter() {
-														if let Some(Limb(limb_id, LimbType::Actuator(actuator))) = limb {
-															match (*limb_id, actuator) {
-																(1, Actuator::Light(value)) => {
-																	if *value {
-																		light_pin.set_high();
-																	} else {
-																		light_pin.set_low();
-																	}
-																}
-																_ => {}
-															}
-														}
-													}
-
-													// Send limbs again
-													Response::Limbs(limbs.clone())
-												// Response::Ok
-												} else {
-													Response::ErrLimbTypeDoesntMatch
-												}
-											}
-
-											(
-												LimbType::Sensor {
-													report_interval,
-													data: _,
-												},
-												LimbType::Sensor {
-													report_interval: report_interval_in,
-													data: _,
-												},
-											) => {
-												*report_interval = report_interval_in;
-
-												// Send limbs again
-												Response::Limbs(limbs.clone())
-												// Response::Ok
-											}
-											_ => Response::ErrLimbTypeDoesntMatch,
-										}
-									} else {
-										Response::ErrLimbTypeDoesntMatch
-									}
-								} else {
-									Response::ErrLimbNotFound
-								}
-							}
-						},
-					});
-
-					let mut data = [0u8; 32];
-					let data = postcard::to_slice(&message, &mut data).unwrap();
-
-					led.toggle();
-					Radio::transmit(
-						&mut radio,
-						&Payload::new_with_addr(&data, node_addr, addr_to_cc1101_hq_pipe(node_addr)),
-					)
-					.unwrap(); // Send sets tx, sends
-					led.toggle();
-				}
 			}
+
+			radio.to_idle().unwrap();
+			radio.power_down().unwrap();
 		}
 
-		radio.to_idle().unwrap();
 		en_wdi_and_pd();
 	}
 }

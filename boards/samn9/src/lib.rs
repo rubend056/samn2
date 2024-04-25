@@ -49,6 +49,7 @@ fn WDT() {
 	})
 }
 
+/// Only do this after Peripherals::take, or take will Panic, because this function steals.
 pub fn acknowlege_and_disable_watchdog() {
 	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
 	// Clear watchdog flag
@@ -63,6 +64,7 @@ pub fn now() -> u32 {
 	interrupt::free(|cs| SECONDS.borrow(cs).get())
 }
 
+/// Enable watchdog interrupt and enter power down mode
 pub fn en_wdi_and_pd() {
 	// A little stealing so we can set some low level registers
 	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
