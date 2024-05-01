@@ -177,8 +177,10 @@ fn main() -> ! {
 		// Only send if there's any sensor to report
 		// Or we have a hearbeat due
 		if sensor_updated || now >= last_message + node_info.heartbeat_interval as u32 {
-			// Give the radio a bit of head start powering back up from sleep
-			radio.wake_up().unwrap();
+			// Wake up the radio
+			radio.wake_up_wait().unwrap();
+			// Rewrite the patable because its lost during sleep
+			radio.write_patable().unwrap();
 
 			let message = Message::Message(MessageData::Response {
 				id: None,
