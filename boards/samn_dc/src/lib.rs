@@ -19,8 +19,8 @@ use samn_common::{
 	radio::*,
 };
 
-pub const WATCHDOG_TIMEOUT: wdt::Timeout = wdt::Timeout::Ms8000;
-pub const WDT_SECONDS_INCREASE: u32 = 8;
+pub const WATCHDOG_TIMEOUT: wdt::Timeout = wdt::Timeout::Ms4000;
+pub const WDT_SECONDS_INCREASE: u32 = 4;
 pub const SEARCH_NETWORK_INTERVAL: u32 = 8;
 pub const HEARTBEAT_INTERVAL: u16 = 60;
 pub const LED_ON_MS: u16 = 50;

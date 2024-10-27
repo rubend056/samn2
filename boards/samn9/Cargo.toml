@@ -9,11 +9,7 @@ panic-halt = {workspace = true}
 ufmt = {workspace = true}
 nb = {workspace = true}
 embedded-hal = {workspace = true}
-pwm-pca9685 = {workspace = true}
-embedded-storage = {workspace = true}
-embedded-io = {workspace = true}
 avr-device = {workspace = true}
-either = {workspace = true}
 embedded-hal-bus = {workspace = true}
 panic-serial = {workspace = true}
 heapless = {workspace = true}

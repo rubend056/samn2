@@ -1,4 +1,4 @@
-##################### FUSES ATMEGA328P/B #######################
+##################### FUSES ATMEGA328PB #######################
 ###############  BE EXTREMELY CAREFUL WITH THIS ################
 ###############  0 means ON, 1 means OFF        ################
 ###############  Definitely use the atmega datasheet ###########
@@ -7,7 +7,7 @@
 #	6			None							1
 #	5			None							1
 #	4			None					 		1
-#	3			Disable clock failure detection	0 <- atmega328P didn't have this feature (None), and it was by default '1'
+#	3			Disable clock failure detection	0 <- atmega328P didn't have this feature, and on the atmega328P it was by default '1'
 #	2			BODL2							1
 #	1			BODL1							1
 #	0			BODL0							1
@@ -49,8 +49,9 @@ def fuse_config_samn_v9 [] {
     
     # Enable brown out detector for 2.7V
     $ext = (bit_on $ext 1)
+    
     # Enable clock failure detection
-    $ext = (bit_off $ext 3)
+    # $ext = (bit_off $ext 3)
 
     # Don't divide clock by 8 internally
     $low = (bit_off $low 7)

@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "boards/samn9","boards/samn8","boards/uno"
+    "boards/samn9","boards/samn8","boards/uno","boards/samn_dc","boards/samn_switch"
 ]
 exclude = [
     "avr-hal/*"

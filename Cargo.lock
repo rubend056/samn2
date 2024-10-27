@@ -471,12 +471,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "embedded-io"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
-
-[[package]]
 name = "embedded-storage"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1064,16 +1058,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pwm-pca9685"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f38528c196e50b4bd747634780749dbe4f67f476e03293ccf1c4f324726d8387"
-dependencies = [
- "embedded-hal 0.2.7",
- "nb 1.1.0",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1239,17 +1223,13 @@ version = "0.1.0"
 dependencies = [
  "arduino-hal",
  "avr-device",
- "either",
  "embedded-hal 1.0.0",
  "embedded-hal-bus",
- "embedded-io",
- "embedded-storage",
  "heapless 0.8.0",
  "nb 1.1.0",
  "panic-halt",
  "panic-serial",
  "postcard",
- "pwm-pca9685",
  "samn-common",
  "serde",
  "ufmt",
@@ -1263,21 +1243,53 @@ dependencies = [
  "avr-device",
  "bme280",
  "dht11",
- "either",
  "embedded-hal 1.0.0",
  "embedded-hal-bus",
- "embedded-io",
- "embedded-storage",
  "heapless 0.8.0",
  "nb 1.1.0",
  "panic-halt",
  "panic-serial",
  "postcard",
- "pwm-pca9685",
  "samn-common",
  "serde",
  "ufmt",
  "ufmt_float",
+]
+
+[[package]]
+name = "samn_dc"
+version = "0.1.0"
+dependencies = [
+ "arduino-hal",
+ "avr-device",
+ "embedded-hal 1.0.0",
+ "embedded-hal-bus",
+ "heapless 0.8.0",
+ "nb 1.1.0",
+ "panic-halt",
+ "panic-serial",
+ "postcard",
+ "samn-common",
+ "serde",
+ "ufmt",
+]
+
+[[package]]
+name = "samn_switch"
+version = "0.1.0"
+dependencies = [
+ "arduino-hal",
+ "avr-device",
+ "embedded-hal 1.0.0",
+ "embedded-hal-bus",
+ "heapless 0.8.0",
+ "nb 1.1.0",
+ "panic-halt",
+ "panic-serial",
+ "postcard",
+ "samn-common",
+ "serde",
+ "ufmt",
 ]
 
 [[package]]
@@ -1660,17 +1672,13 @@ version = "0.1.0"
 dependencies = [
  "arduino-hal",
  "avr-device",
- "either",
  "embedded-hal 1.0.0",
  "embedded-hal-bus",
- "embedded-io",
- "embedded-storage",
  "heapless 0.8.0",
  "nb 1.1.0",
  "panic-halt",
  "panic-serial",
  "postcard",
- "pwm-pca9685",
  "samn-common",
  "serde",
  "ufmt",
