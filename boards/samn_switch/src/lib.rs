@@ -77,6 +77,21 @@ pub fn en_wdi_and_pd() {
 		avr_device::asm::sleep();
 	}
 }
+/// Enable watchdog interrupt and enter power down mode
+pub fn en_wdi_and_idle() {
+	// A little stealing so we can set some low level registers
+	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
+	// Enable watchdog timer as an interrupt
+	dp.WDT.wdtcsr.modify(|_, w| w.wdie().set_bit());
+	// Enable sleep, set mode to idle
+	dp.CPU.smcr.modify(|_, w| w.se().set_bit().sm().idle());
+	unsafe {
+		// Enable interrupts
+		avr_device::interrupt::enable();
+		// Sleep
+		avr_device::asm::sleep();
+	}
+}
 
 // #[avr_device::interrupt(atmega328pb)]
 // fn INT1() { // This corresponds to the irq pin on nrf24

@@ -8,17 +8,17 @@
  * Because this is the first node where we keep the radio ON constantly we don't really care about power consumption.
  * For this one we should permanently keep micrcontroller ON and just keep reading IRQ periodically, every 100ms,
  * that would be simplest.
- * 
- * Actually I went with putting microcontroller in powerdown while interrupts wake it up. Then it checks if button 
+ *
+ * Actually I went with putting microcontroller in powerdown while interrupts wake it up. Then it checks if button
  * has been pressed or there's something on the radio and reacts accordingly depending on if its currently finding
  * a network or doing the main loop of sending limbs/heartbeat and reacting to commands or not.
- * 
+ *
  * Only bad thing about this is if you press the button fast enough, nah.. it would eventually reach the end of the
- * main loop, because the inrerrupt is only a few instructions long, and enable watchdog interrupt which means the 
+ * main loop, because the inrerrupt is only a few instructions long, and enable watchdog interrupt which means the
  * watchdog would work fine... just overthingking on my part...
- * 
+ *
  * Let's test it out :)
- * 
+ *
  */
 use core::cmp::{max, min};
 
@@ -43,7 +43,6 @@ static BUTTON_PRESSED: AtomicBool = AtomicBool::new(false);
 #[avr_device::interrupt(atmega328p)]
 #[allow(non_snake_case)]
 fn PCINT2() {
-
 	delay_ms(10);
 
 	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
@@ -55,7 +54,7 @@ fn PCINT2() {
 	// We just have to make sure that our button is the one that triggered this interrupt
 	// for us to set BUTTTON_PRESSED
 	let button_active = pin.pd5().bit_is_clear();
-	
+
 	if button_active {
 		BUTTON_PRESSED.store(true, Ordering::SeqCst);
 	}
@@ -89,7 +88,6 @@ fn main() -> ! {
 	// Switch
 	let mut _button = pins.button.into_pull_up_input(); // make sure switch has has a pull-up attached
 
-
 	// Led
 	let mut led = pins.led.into_output();
 	led.toggle();
@@ -110,12 +108,10 @@ fn main() -> ! {
 	// Start watchdog :) , operations shouldn't take longer than 2sec.
 	watchdog.start(WATCHDOG_TIMEOUT).unwrap();
 
-	
 	// Enable PCINT2
 	dp.EXINT.pcicr.write(|w| unsafe { w.bits(0b100) });
 	// For both  button / pd5 / PCINT21  AND  irq / pd2 / PCINT18
-	dp.EXINT.pcmsk2.write(|w| { w.bits(0b100100) });
-
+	dp.EXINT.pcmsk2.write(|w| w.bits(0b100100));
 
 	// Radio
 	let mut radio;
@@ -227,9 +223,11 @@ fn main() -> ! {
 	// ----- We now have an address and are part of a network, we now setup the limbs
 	// ----- and loop continously to operate the node.
 
-	let mut limbs: Limbs = [Some(Limb(1, LimbType::Actuator(Actuator::Light(mosfet.is_set_high())))), None, None];
-
-	
+	let mut limbs: Limbs = [
+		Some(Limb(1, LimbType::Actuator(Actuator::Light(mosfet.is_set_high())))),
+		None,
+		None,
+	];
 
 	loop {
 		// Sensor / heartbeat / commands / acuators loop
@@ -277,97 +275,94 @@ fn main() -> ! {
 				.unwrap();
 			led.toggle();
 			last_message = now;
+		}
 
-			// Listen for commands for >=76ms, reset counter if command received
-			while let Some(Message::Message(MessageData::Command { id, command })) =
-				check_for_messages_for_a_bit(&mut radio, &mut irq)
-			{
-				// Answer command
-				let message = Message::Message(MessageData::Response {
-					id: Some(id),
-					response: match command {
-						Command::Info => Response::Info(node_info.clone()),
-						Command::Limbs => Response::Limbs(limbs.clone()),
-						Command::SetLimb(limb_in) => {
-							if let Some(limb) = limbs
-								.iter_mut()
-								.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
-								.find(|limb| limb.0 == limb_in.0)
-							{
-								if variant_eq(&limb.1, &limb_in.1) {
-									match (&mut limb.1, limb_in.1) {
-										(LimbType::Actuator(actuator), LimbType::Actuator(actuator_in)) => {
-											if variant_eq(actuator, &actuator_in) {
-												*actuator = actuator_in;
-												// Updating actuators
-												for limb in limbs.iter() {
-													if let Some(Limb(limb_id, LimbType::Actuator(actuator))) = limb {
-														match (*limb_id, actuator) {
-															(1, Actuator::Light(value)) => {
-																if *value {
-																	led.set_high();
-																} else {
-																	led.set_low();
-																}
+		// Listen for commands for >=76ms, reset counter if command received
+		while let Some(Message::Message(MessageData::Command { id, command })) =
+			check_for_messages_for_a_bit(&mut radio, &mut irq)
+		{
+			// Answer command
+			let message = Message::Message(MessageData::Response {
+				id: Some(id),
+				response: match command {
+					Command::Info => Response::Info(node_info.clone()),
+					Command::Limbs => Response::Limbs(limbs.clone()),
+					Command::SetLimb(limb_in) => {
+						if let Some(limb) = limbs
+							.iter_mut()
+							.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
+							.find(|limb| limb.0 == limb_in.0)
+						{
+							if variant_eq(&limb.1, &limb_in.1) {
+								match (&mut limb.1, limb_in.1) {
+									(LimbType::Actuator(actuator), LimbType::Actuator(actuator_in)) => {
+										if variant_eq(actuator, &actuator_in) {
+											*actuator = actuator_in;
+
+											// Updating actuators
+											for limb in limbs.iter() {
+												if let Some(Limb(limb_id, LimbType::Actuator(actuator))) = limb {
+													match (*limb_id, actuator) {
+														(1, Actuator::Light(value)) => {
+															if *value {
+																mosfet.set_high();
+															} else {
+																mosfet.set_low();
 															}
-															_ => {}
 														}
+														_ => {}
 													}
 												}
-
-												// Send limbs again
-												Response::Limbs(limbs.clone())
-											// Response::Ok
-											} else {
-												Response::ErrLimbTypeDoesntMatch
 											}
-										}
-
-										(
-											LimbType::Sensor {
-												report_interval,
-												data: _,
-											},
-											LimbType::Sensor {
-												report_interval: report_interval_in,
-												data: _,
-											},
-										) => {
-											*report_interval = report_interval_in;
 
 											// Send limbs again
 											Response::Limbs(limbs.clone())
-											// Response::Ok
+										// Response::Ok
+										} else {
+											Response::ErrLimbTypeDoesntMatch
 										}
-										_ => Response::ErrLimbTypeDoesntMatch,
 									}
-								} else {
-									Response::ErrLimbTypeDoesntMatch
+
+									(
+										LimbType::Sensor {
+											report_interval,
+											data: _,
+										},
+										LimbType::Sensor {
+											report_interval: report_interval_in,
+											data: _,
+										},
+									) => {
+										*report_interval = report_interval_in;
+
+										// Send limbs again
+										Response::Limbs(limbs.clone())
+										// Response::Ok
+									}
+									_ => Response::ErrLimbTypeDoesntMatch,
 								}
 							} else {
-								Response::ErrLimbNotFound
+								Response::ErrLimbTypeDoesntMatch
 							}
+						} else {
+							Response::ErrLimbNotFound
 						}
-					},
-				});
+					}
+				},
+			});
 
-				let mut data = [0u8; 32];
-				let data = postcard::to_slice(&message, &mut data).unwrap();
+			let mut data = [0u8; 32];
+			let data = postcard::to_slice(&message, &mut data).unwrap();
 
-				led.toggle();
-				radio
-					.transmit(&Payload::new_with_addr(
-						&data,
-						node_addr,
-						addr_to_nrf24_hq_pipe(node_addr),
-					))
-					.unwrap(); // Send sets tx, sends
-				led.toggle();
-			}
-
-			// radio.to_idle().unwrap();
-			// radio.power_down().unwrap();
-			radio.to_rx().unwrap(); // Leave radio in RX mode.
+			led.toggle();
+			radio
+				.transmit(&Payload::new_with_addr(
+					&data,
+					node_addr,
+					addr_to_nrf24_hq_pipe(node_addr),
+				))
+				.unwrap(); // Send sets tx, sends
+			led.toggle();
 		}
 
 		en_wdi_and_pd();
