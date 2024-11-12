@@ -3,21 +3,11 @@
 #![feature(abi_avr_interrupt)]
 
 /**
- * So samn_dc nodes has 1 push button & 1 mosfet it can use, along with of course the nrf24 radio.
+ * So samn_switch nodes has a switch, triac, current sensor & temp/humidity sensor it can use,
+ * along with of course the nrf24 radio.
  *
- * Because this is the first node where we keep the radio ON constantly we don't really care about power consumption.
- * For this one we should permanently keep micrcontroller ON and just keep reading IRQ periodically, every 100ms,
- * that would be simplest.
- *
- * Actually I went with putting microcontroller in powerdown while interrupts wake it up. Then it checks if button
- * has been pressed or there's something on the radio and reacts accordingly depending on if its currently finding
- * a network or doing the main loop of sending limbs/heartbeat and reacting to commands or not.
- *
- * Only bad thing about this is if you press the button fast enough, nah.. it would eventually reach the end of the
- * main loop, because the inrerrupt is only a few instructions long, and enable watchdog interrupt which means the
- * watchdog would work fine... just overthingking on my part...
- *
- * Let's test it out :)
+ * I had to rip out the code for current sensing because the thing was pancking after a SetLimb command :|
+ * only think I can think of is stack overflow.... now it seems to be working.
  *
  */
 use arduino_hal::{delay_ms, hal::wdt, spi, Delay};
@@ -38,36 +28,41 @@ use samn_switch::*;
 // ***************** SWITCH TOGGLING
 use core::{
 	cell::RefCell,
-	sync::atomic::{AtomicBool, Ordering},
+	sync::{
+		self,
+		atomic::{AtomicBool, Ordering},
+	},
 };
 static SWITCH_TOGGLED: AtomicBool = AtomicBool::new(false);
 static SWITCH_STATE: AtomicBool = AtomicBool::new(false);
+static RADIO_IRQ_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 // Executes on IRQ / Button Press changes
 #[avr_device::interrupt(atmega328p)]
 #[allow(non_snake_case)]
 fn PCINT2() {
-	// delay_ms(10);
+	delay_ms(1);
 
 	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
 
 	// Check if button or irq is active.
 	let pin = dp.PORTD.pind.read();
-	// let _irq_active = port.pd2().bit_is_clear();
+
 	// We don't do anything with IRQ because that'll get checked later on the main loop
 	// We just have to make sure that our button is the one that triggered this interrupt
 	// for us to set BUTTTON_PRESSED
 	let button_active = pin.pd5().bit_is_clear();
+	RADIO_IRQ_ACTIVE.store(pin.pd2().bit_is_clear(), Ordering::Relaxed);
 
-	if button_active != SWITCH_STATE.load(Ordering::SeqCst) {
-		SWITCH_TOGGLED.store(true, Ordering::SeqCst);
-		SWITCH_STATE.store(button_active, Ordering::SeqCst);
+	if button_active != SWITCH_STATE.load(Ordering::Relaxed) {
+		SWITCH_STATE.store(button_active, Ordering::Relaxed);
+		SWITCH_TOGGLED.store(true, Ordering::Relaxed);
 	}
 }
 fn switch_toggled() -> bool {
 	avr_device::interrupt::free(|_cs| {
-		if SWITCH_TOGGLED.load(Ordering::SeqCst) {
-			SWITCH_TOGGLED.store(false, Ordering::SeqCst);
+		if SWITCH_TOGGLED.load(Ordering::Relaxed) {
+			SWITCH_TOGGLED.store(false, Ordering::Relaxed);
 			true
 		} else {
 			false
@@ -77,31 +72,27 @@ fn switch_toggled() -> bool {
 
 // ****************** ISENSE
 // Shared state for ADC readings and control logic
-static I_READINGS_AVERAGE: Mutex<RefCell<u16>> = Mutex::new(RefCell::new(0));
-static I_READINGS: Mutex<RefCell<[u16; 16]>> = Mutex::new(RefCell::new([0; 16]));
-static READING_INDEX: Mutex<RefCell<u8>> = Mutex::new(RefCell::new(0));
+static mut I_READINGS_AVERAGE: u16 = 0;
+static mut I_READINGS: [u16; 16] = [0; 16];
+static mut READING_INDEX: u8 = 0;
 
-// type A = ;
+// type A = Option<arduino_hal::adc::Adc>;
 // Shared static for the ADC and pin
-static ADC: Mutex<RefCell<Option<arduino_hal::adc::Adc>>> = Mutex::new(RefCell::new(None));
-static ISENSE_PIN: Mutex<
-	RefCell<Option<arduino_hal::port::Pin<arduino_hal::port::mode::Analog, arduino_hal::hal::port::PC1>>>,
-> = Mutex::new(RefCell::new(None));
+static mut ADC: Option<arduino_hal::adc::Adc> = None;
+static mut ISENSE_PIN: Option<arduino_hal::port::Pin<arduino_hal::port::mode::Analog, arduino_hal::hal::port::PC1>> =
+	None;
 
 // Helper function to calculate the average of the last 16 ADC readings
 fn average_adc_readings() -> u16 {
-	interrupt::free(|cs| {
-		let readings = I_READINGS_AVERAGE.borrow(cs).borrow();
-		*readings
-	})
+	interrupt::free(|_| unsafe { I_READINGS_AVERAGE })
 }
 
 #[avr_device::interrupt(atmega328p)]
 fn TIMER0_COMPA() {
-	interrupt::free(|cs| {
+	interrupt::free(|_| {
 		// Borrow the ADC and pin
-		let mut adc_ref = ADC.borrow(cs).borrow_mut();
-		let mut pin_ref = ISENSE_PIN.borrow(cs).borrow_mut();
+		let mut adc_ref = unsafe { &mut ADC };
+		let mut pin_ref = unsafe { &mut ISENSE_PIN };
 
 		if let (Some(adc), Some(isense_pin)) = (adc_ref.as_mut(), pin_ref.as_mut()) {
 			// Perform an ADC reading
@@ -111,19 +102,19 @@ fn TIMER0_COMPA() {
 					adc.read_nonblocking(isense_pin).ok();
 
 					// Access the ADC readings and current index
-					let mut readings = I_READINGS.borrow(cs).borrow_mut();
-					let mut index = READING_INDEX.borrow(cs).borrow_mut();
+					let mut readings = unsafe { &mut I_READINGS };
+					let mut index = unsafe { &mut READING_INDEX };
 
 					// Store the reading in the circular buffer
 					readings[*index as usize] = adc_value;
 					*index = (*index + 1) % 16; // Move to the next index, wrapping around to 0 after 15
 					if *index == 0 {
 						// Store the average of the readings in the longer buffer
-						let mut total_average = I_READINGS_AVERAGE.borrow(cs).borrow_mut();
+						let mut total_average = unsafe { &mut I_READINGS_AVERAGE };
 
 						let sum: u16 = readings.iter().map(|&r| (r as i16 - 511).abs() as u16).sum();
 						let average = (sum / 16) as u32 * 100;
-						*total_average = ((*total_average as u32 * 61 + average) / 62) as u16;
+						*total_average = ((*total_average as u32 * 619 + average) / 620) as u16;
 					}
 				}
 				_ => {}
@@ -133,9 +124,9 @@ fn TIMER0_COMPA() {
 }
 
 // With a clock of 8MHz a prescaler of 64 and a count of 125
-// This will run every `1 / (8_000_000 / 64 / 125)` = `1ms`
+// This will run every `1 / (8_000_000 / 64 / 250)` = `2ms`
 const PRESCALER: u32 = 64;
-const TIMER_COUNTS: u32 = 125;
+const TIMER_COUNTS: u32 = 250;
 fn timer_init(tc0: arduino_hal::pac::TC0) {
 	// Configure the timer for the above interval (in CTC mode)
 	// and enable its interrupt.
@@ -149,6 +140,18 @@ fn timer_init(tc0: arduino_hal::pac::TC0) {
 		_ => panic!(),
 	});
 	tc0.timsk0.write(|w| w.ocie0a().set_bit());
+}
+// Spits out current in milliamps (max of 20_000 mA, or 20A)
+fn average_current() -> u16 {
+	let reading = average_adc_readings();
+	// same as * 20_000 / 51_200
+	if reading < 2_600
+	// To prevent an overflow & conserve precision
+	{
+		reading * 25 / 64
+	} else {
+		reading / 64 * 25
+	}
 }
 
 fn temperature_humidity<E: core::fmt::Debug, I2C: embedded_hal::i2c::I2c<Error = E>>(i2c: &mut I2C) -> (i16, u8) {
@@ -170,18 +173,6 @@ fn temperature_humidity<E: core::fmt::Debug, I2C: embedded_hal::i2c::I2c<Error =
 	i2c.write(ADDRESS, &SLEEP).unwrap();
 
 	((temp / 15 * 4) as i16 - 4500, (hum / 665) as u8)
-}
-// Spits out current in milliamps (max of 20_000 mA, or 20A)
-fn average_current() -> u16 {
-	let reading = average_adc_readings();
-	// same as * 20_000 / 51_200
-	if reading < 2_600
-	// To prevent an overflow & conserve precision
-	{
-		reading * 25 / 64
-	} else {
-		reading / 64 * 25
-	}
 }
 
 // ************** MAIN
@@ -268,9 +259,9 @@ fn main() -> ! {
 		let isense_pin = pins.isense.into_analog_input(&mut adc);
 		let mut _vsense = pins.vsense.into_pull_up_input();
 		// Move ADC and pin to their static locations
-		interrupt::free(|cs| {
-			*ADC.borrow(cs).borrow_mut() = Some(adc);
-			*ISENSE_PIN.borrow(cs).borrow_mut() = Some(isense_pin);
+		interrupt::free(|_| {
+			unsafe { ADC = Some(adc) };
+			unsafe { ISENSE_PIN = Some(isense_pin) };
 		});
 		timer_init(dp.TC0);
 	}
@@ -313,49 +304,61 @@ fn main() -> ! {
 		}
 
 		loop {
-			// Allowing for switch toggling while searching for network
-			if switch_toggled() {
-				triac.toggle();
-			}
+			// Only execute if anything good triggered this wakeup
+			if WDT_TRIGGERED.load(Ordering::Relaxed)
+				|| SWITCH_TOGGLED.load(Ordering::Relaxed)
+				|| RADIO_IRQ_ACTIVE.load(Ordering::Relaxed)
+			{
+				interrupt::disable();
+				WDT_TRIGGERED.store(false, Ordering::Relaxed);
 
-			let now = now();
-			if now >= last_message + SEARCH_NETWORK_INTERVAL {
-				// Blink twice
-				led.toggle();
-				delay_ms(LED_OFF_MS);
-				led.toggle();
+				let now = now();
 
-				delay_ms(LED_OFF_MS);
+				// Allowing for switch toggling while searching for network
+				let toggled = switch_toggled();
+				if toggled {
+					triac.toggle();
+				}
 
-				led.toggle();
-				delay_ms(LED_OFF_MS);
-				led.toggle();
+				if now >= last_message + SEARCH_NETWORK_INTERVAL {
+					// Blink twice
+					led.toggle();
+					delay_ms(LED_OFF_MS);
+					led.toggle();
 
-				delay_ms(LED_OFF_MS);
+					delay_ms(LED_OFF_MS);
 
-				// Send looking for network
-				radio
-					.transmit(&Payload::new_with_addr(
-						&postcard::to_vec::<Message, 32>(&Message::SearchingNetwork(node_id)).unwrap(),
-						node_addr,
-						addr_to_nrf24_hq_pipe(node_addr),
-					))
-					.unwrap();
-				last_message = now;
+					led.toggle();
+					delay_ms(LED_OFF_MS);
+					led.toggle();
 
-				if let Some(Message::Network(node_id_in, node_addr_in)) = check_for_messages_for_a_bit(&mut radio, &mut irq) {
-					if node_id_in == node_id {
-						node_addr = node_addr_in;
-						radio.set_rx_filter(&[addr_to_rx_pipe(node_addr)]).unwrap();
-						led.toggle();
-						delay_ms(LED_OFF_MS);
-						led.toggle();
-						break; // We got a valid address, get out of this loop
+					delay_ms(LED_OFF_MS);
+
+					// Send looking for network
+					radio
+						.transmit(&Payload::new_with_addr(
+							&postcard::to_vec::<Message, 32>(&Message::SearchingNetwork(node_id)).unwrap(),
+							node_addr,
+							addr_to_nrf24_hq_pipe(node_addr),
+						))
+						.unwrap();
+					last_message = now;
+
+					if let Some(Message::Network(node_id_in, node_addr_in)) = check_for_messages_for_a_bit(&mut radio, &mut irq) {
+						if node_id_in == node_id {
+							node_addr = node_addr_in;
+							radio.set_rx_filter(&[addr_to_rx_pipe(node_addr)]).unwrap();
+							led.toggle();
+							delay_ms(LED_OFF_MS);
+							led.toggle();
+							break; // We got a valid address, get out of this loop
+						}
 					}
 				}
+
+				radio.to_idle().unwrap();
 			}
 
-			radio.to_idle().unwrap();
 			en_wdi_and_idle();
 		}
 	}
@@ -369,175 +372,202 @@ fn main() -> ! {
 			1,
 			LimbType::Sensor {
 				report_interval: 60 * 5,
-				data: None,
+				data: Some(Sensor::TempHum(temperature_humidity(&mut i2c))),
 			},
 		)),
 		Some(Limb(
 			2,
 			LimbType::Sensor {
 				report_interval: 60 * 5,
-				data: None,
+				data: Some(Sensor::Current(average_current())),
 			},
 		)),
+		// None,
 	];
 
 	// Sensor Id -> last_report_time
 	let mut sensor_last_report = [0u32; LIMBS_MAX];
-	let mut update_sensors = |now: &u32, limbs: &mut Limbs| -> bool {
-		let mut updated = false;
-		// Here we check if sensors need to report anything
-		// Depending on the report interval of each sensor
-		for limb in limbs.iter_mut() {
-			if let Some(Limb(limb_id, LimbType::Sensor { report_interval, data })) = limb {
-				// Check if it's our time to report, using report_interval
-				if *now >= sensor_last_report[*limb_id as usize] + (*report_interval as u32) {
-					match *limb_id {
-						1 => *data = Some(Sensor::TempHum(temperature_humidity(&mut i2c))),
-						2 => *data = Some(Sensor::Current(average_current())),
-						_ => {}
-					}
-					sensor_last_report[*limb_id as usize] = *now;
-					updated = true;
-				}
-			}
-		}
-		updated
-	};
 
 	loop {
 		// Sensor / heartbeat / commands / acuators loop
+		if WDT_TRIGGERED.load(Ordering::Relaxed)
+			|| SWITCH_TOGGLED.load(Ordering::Relaxed)
+			|| RADIO_IRQ_ACTIVE.load(Ordering::Relaxed)
+		{
+			interrupt::disable();
+			WDT_TRIGGERED.store(false, Ordering::Relaxed);
 
-		let now = now();
-		let toggled = switch_toggled();
-		let sensor_updated = update_sensors(&now, &mut limbs);
+			let now = now();
+			let toggled = switch_toggled();
+			let sensor_updated = {
+				let mut updated = false;
+				// Here we check if sensors need to report anything
+				// Depending on the report interval of each sensor
+				for limb in limbs.iter_mut() {
+					if let Some(Limb(limb_id, LimbType::Sensor { report_interval, data })) = limb {
+						// Check if it's our time to report, using report_interval
+						if now >= sensor_last_report[*limb_id as usize] + (*report_interval as u32) {
+							match *limb_id {
+								1 => *data = Some(Sensor::TempHum(temperature_humidity(&mut i2c))),
+								2 => *data = Some(Sensor::Current(average_current())),
+								_ => {}
+							}
+							sensor_last_report[*limb_id as usize] = now;
+							updated = true;
+						}
+					}
+				}
+				updated
+			};
 
-		if toggled {
-			// Toggle limb & update mosfet
-			if let Some(Limb(_, LimbType::Actuator(Actuator::Light(v)))) = &mut limbs[0] {
-				*v = !*v;
-				if *v {
-					triac.set_high();
-				} else {
-					triac.set_low();
+			if toggled {
+				// Toggle limb & update mosfet
+				if let Some(Limb(_, LimbType::Actuator(Actuator::Light(v)))) = &mut limbs[0] {
+					*v = !*v;
+					if *v {
+						triac.set_high();
+					} else {
+						triac.set_low();
+					}
 				}
 			}
-		}
 
-		// Only send if there's any sensor to report
-		// Or we have a hearbeat due
-		// Or an actuator value has changed
-		if sensor_updated || toggled || now >= last_message + node_info.heartbeat_interval as u32 {
-			// radio.power_up().unwrap();
+			// Only send if there's any sensor to report
+			// Or we have a hearbeat due
+			// Or an actuator value has changed
+			if sensor_updated || toggled || now >= last_message + node_info.heartbeat_interval as u32 {
+				let message = Message::Message(MessageData::Response {
+					id: None,
+					response: if toggled || sensor_updated {
+						Response::Limbs(limbs.clone())
+					} else {
+						Response::Heartbeat(now)
+					},
+				});
+				let mut data = [0u8; 32];
+				let data = postcard::to_slice(&message, &mut data).unwrap();
 
-			let message = Message::Message(MessageData::Response {
-				id: None,
-				response: if toggled || sensor_updated {
-					Response::Limbs(limbs.clone())
-				} else {
-					Response::Heartbeat(now)
-				},
-			});
-			let mut data = [0u8; 32];
-			let data = postcard::to_slice(&message, &mut data).unwrap();
+				// Indicate we are sending
+				led.toggle();
+				radio
+					.transmit(&Payload::new_with_addr(
+						&data,
+						node_addr,
+						addr_to_nrf24_hq_pipe(node_addr),
+					))
+					.unwrap();
+				led.toggle();
+				last_message = now;
+			}
 
-			// Indicate we are sending
-			led.toggle();
-			radio
-				.transmit(&Payload::new_with_addr(
-					&data,
-					node_addr,
-					addr_to_nrf24_hq_pipe(node_addr),
-				))
-				.unwrap();
-			led.toggle();
-			last_message = now;
-		}
+			// Listen for commands for >=76ms, reset counter if command received
+			while let Some(Message::Message(MessageData::Command { id, command })) =
+				check_for_messages_for_a_bit(&mut radio, &mut irq)
+			{
+				let response = match command {
+					Command::Info => Response::Info(node_info.clone()),
+					Command::Limbs => Response::Limbs(limbs.clone()),
+					Command::SetLimb(limb_in) => {
+						if let Some(limb) = limbs
+							.iter_mut()
+							.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
+							.find(|limb| limb.0 == limb_in.0)
+						{
+							if variant_eq(&limb.1, &limb_in.1) {
+								match (&mut limb.1, limb_in.1) {
+									(LimbType::Actuator(actuator), LimbType::Actuator(actuator_in)) => {
+										if variant_eq(actuator, &actuator_in) {
+											*actuator = actuator_in;
 
-		// Listen for commands for >=76ms, reset counter if command received
-		while let Some(Message::Message(MessageData::Command { id, command })) =
-			check_for_messages_for_a_bit(&mut radio, &mut irq)
-		{
-			let response = match command {
-				Command::Info => Response::Info(node_info.clone()),
-				Command::Limbs => Response::Limbs(limbs.clone()),
-				Command::SetLimb(limb_in) => {
-					if let Some(limb) = limbs
-						.iter_mut()
-						.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
-						.find(|limb| limb.0 == limb_in.0)
-					{
-						if variant_eq(&limb.1, &limb_in.1) {
-							match (&mut limb.1, limb_in.1) {
-								(LimbType::Actuator(actuator), LimbType::Actuator(actuator_in)) => {
-									if variant_eq(actuator, &actuator_in) {
-										*actuator = actuator_in;
-
-										// Updating actuators
-										for limb in limbs.iter() {
-											if let Some(Limb(limb_id, LimbType::Actuator(actuator))) = limb {
-												match (*limb_id, actuator) {
-													(0, Actuator::Light(value)) => {
-														if *value {
-															triac.set_high();
-														} else {
-															triac.set_low();
+											// Updating actuators
+											for limb in limbs.iter() {
+												if let Some(Limb(limb_id, LimbType::Actuator(actuator))) = limb {
+													match (*limb_id, actuator) {
+														(0, Actuator::Light(value)) => {
+															if *value {
+																triac.set_high();
+															} else {
+																triac.set_low();
+															}
 														}
+														_ => {}
 													}
-													_ => {}
 												}
 											}
+
+											// Send limbs again
+											Response::Limbs(limbs.clone())
+										// Response::Ok
+										} else {
+											Response::ErrLimbTypeDoesntMatch
 										}
+									}
+
+									(
+										LimbType::Sensor {
+											report_interval,
+											data: _,
+										},
+										LimbType::Sensor {
+											report_interval: report_interval_in,
+											data: _,
+										},
+									) => {
+										*report_interval = report_interval_in;
 
 										// Send limbs again
 										Response::Limbs(limbs.clone())
-									// Response::Ok
-									} else {
-										Response::ErrLimbTypeDoesntMatch
+										// Response::Ok
 									}
+									_ => Response::ErrLimbTypeDoesntMatch,
 								}
-
-								(
-									LimbType::Sensor {
-										report_interval,
-										data: _,
-									},
-									LimbType::Sensor {
-										report_interval: report_interval_in,
-										data: _,
-									},
-								) => {
-									*report_interval = report_interval_in;
-
-									// Send limbs again
-									Response::Limbs(limbs.clone())
-									// Response::Ok
-								}
-								_ => Response::ErrLimbTypeDoesntMatch,
+							} else {
+								Response::ErrLimbTypeDoesntMatch
 							}
 						} else {
-							Response::ErrLimbTypeDoesntMatch
+							Response::ErrLimbNotFound
 						}
-					} else {
-						Response::ErrLimbNotFound
 					}
-				}
-			};
+					Command::ToggleLimb(limb_id) => {
+						if let Some(limb) = limbs
+							.iter_mut()
+							.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
+							.find(|limb| limb.0 == limb_id)
+						{
+							if let Limb(_, LimbType::Actuator(Actuator::Light(value))) = limb {
+								*value = !*value;
+								if *value {
+									triac.set_high();
+								} else {
+									triac.set_low();
+								}
+								Response::Limbs(limbs.clone())
+							} else {
+								Response::ErrLimbTypeDoesntMatch
+							}
+						} else {
+							Response::ErrLimbNotFound
+						}
+					}
+				};
 
-			let mut data_initial = [0u8; 32];
-			let data;
-			{
-				let message: Message = Message::Message(MessageData::Response { id: Some(id), response });
-				data = postcard::to_slice(&message, &mut data_initial).unwrap();
-			};
+				// Answer command
+				let payload = {
+					let mut data_initial = [0u8; 28];
+					let data;
+					{
+						let message: Message = Message::Message(MessageData::Response { id: Some(id), response });
+						data = postcard::to_slice(&message, &mut data_initial).unwrap();
+					};
+					Payload::new_with_addr(&data, node_addr, addr_to_nrf24_hq_pipe(node_addr))
+				};
 
-			// Answer command
-			let payload = Payload::new_with_addr(&data, node_addr, addr_to_nrf24_hq_pipe(node_addr));
-
-			led.toggle();
-			radio.transmit(&payload).unwrap(); // Send sets tx, sends
-			led.toggle();
+				// Toggle leds while doing it
+				led.toggle();
+				radio.transmit(&payload).unwrap(); // Send sets tx, sends
+				led.toggle();
+			}
 		}
-
 		en_wdi_and_idle();
 	}
 }

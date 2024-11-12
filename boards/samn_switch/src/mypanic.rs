@@ -1,4 +1,3 @@
-
 // Either we use mypanic, or we use panic_serial
 
 // use arduino_hal::prelude::_unwrap_infallible_UnwrapInfallible;
@@ -21,10 +20,29 @@
 //     ufmt::uwriteln!(&mut serial, "Panic Initialized").unwrap_infallible();
 // }
 
+use crate::acknowlege_and_disable_watchdog;
+use arduino_hal::{
+	delay_ms,
+	hal::port::*,
+	port::{mode::Output, Pin},
+};
+use heapless::String;
+use ufmt::uwrite;
+
 use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
-use arduino_hal::delay_ms;
-use crate::acknowlege_and_disable_watchdog;
+
+// static mut RADIO: Option<
+// 	samn_common::nrf24::NRF24L01<
+// 		core::convert::Infallible,
+// 		Pin<Output, PD6>,
+// 		embedded_hal_bus::spi::ExclusiveDevice<
+// 			arduino_hal::Spi<arduino_hal::hal::Atmega, arduino_hal::pac::SPI0, PB5, PB3, PB4, PB2>,
+// 			Pin<Output, PD7>,
+// 			arduino_hal::hal::delay::Delay<arduino_hal::clock::MHz8>,
+// 		>,
+// 	>,
+// > = None;
 
 #[inline(never)]
 #[panic_handler]
@@ -32,6 +50,18 @@ fn panic(_info: &PanicInfo) -> ! {
 	// Disable interrupts
 	avr_device::interrupt::disable();
 	acknowlege_and_disable_watchdog();
+
+	// if let Some(loc) =_info.location(){
+	// 	let mut s = String::<20>::new();
+	// 	uwrite!(&mut s, "{}", loc.file()); 
+	// 	// if loc.file().len() > 10 {
+	// 	// 	loop{atomic::compiler_fence(Ordering::SeqCst);}
+	// 	// }
+		
+	// }
+	// if _info.message().as_str().map(|x|x.len()>10).unwrap_or(true){
+	// 	loop{atomic::compiler_fence(Ordering::SeqCst);}
+	// }
 
 	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
 
@@ -46,4 +76,4 @@ fn panic(_info: &PanicInfo) -> ! {
 		delay_ms(500);
 	}
 }
-pub fn maybe_init_serial_panic(){}
+pub fn maybe_init_serial_panic() {}

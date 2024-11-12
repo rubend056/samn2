@@ -1,13 +1,21 @@
+export def psize [board, bin] {
+    let root = $env.PWD
+    let out = $"($root)/out/($board)";
+    avr-size -C --mcu=atmega328p $"($out)/($bin).elf"
+}
 export def build [board, bin] {
     let root = $env.PWD
+    let out = $"($root)/out/($board)";
     let args = [
         #"-Zlocation-detail=none",
         "-Zunstable-options",
         #"-Zbuild-std-features=panic_immediate_abort",
-        "--out-dir",$"($root)/out/($board)"
+        "--out-dir", $out
     ]
     enter $"boards/($board)"
         cargo build ...$args --release --bin $bin
+    dexit
+    psize $board $bin
 }
 def get_avrdude_mega [board] {
     enter $"boards/($board)"

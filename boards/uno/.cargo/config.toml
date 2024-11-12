@@ -2,7 +2,7 @@
 target = "../specs/avr-atmega328p.json"
 
 [target.'cfg(target_arch = "avr")']
-runner = "ravedude uno -P /dev/ttyACM0 -cb 57600"
+runner = "ravedude uno -P /dev/ttyUSB0 -cb 57600"
 
 [unstable]
 build-std = ["core"]

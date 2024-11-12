@@ -20,16 +20,16 @@
  * Let's test it out :)
  *
  */
-use core::cmp::{max, min};
 
 use arduino_hal::{delay_ms, hal::wdt, spi, Delay};
-use embedded_hal::{digital::OutputPin, spi::Mode};
+use avr_device::interrupt;
+use embedded_hal::spi::Mode;
 use samn_common::nrf24::NRF24L01;
 use samn_dc::mypanic::maybe_init_serial_panic;
 
 use samn_common::{
 	node::{
-		Actuator, Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response, Sensor, LIMBS_MAX,
+		Actuator, Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response,
 	},
 	radio::*,
 };
@@ -38,31 +38,33 @@ use samn_dc::*;
 
 use core::sync::atomic::{AtomicBool, Ordering};
 static BUTTON_PRESSED: AtomicBool = AtomicBool::new(false);
+static RADIO_IRQ_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 // Executes on IRQ / Button Press changes
 #[avr_device::interrupt(atmega328p)]
 #[allow(non_snake_case)]
 fn PCINT2() {
-	delay_ms(10);
+	delay_ms(1);
 
 	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
 
 	// Check if button or irq is active.
 	let pin = dp.PORTD.pind.read();
-	// let _irq_active = port.pd2().bit_is_clear();
 	// We don't do anything with IRQ because that'll get checked later on the main loop
 	// We just have to make sure that our button is the one that triggered this interrupt
 	// for us to set BUTTTON_PRESSED
+
 	let button_active = pin.pd5().bit_is_clear();
+	RADIO_IRQ_ACTIVE.store(pin.pd2().bit_is_clear(), Ordering::Relaxed);
 
 	if button_active {
-		BUTTON_PRESSED.store(true, Ordering::SeqCst);
+		BUTTON_PRESSED.store(true, Ordering::Relaxed);
 	}
 }
-fn pressed(flag: &AtomicBool) -> bool {
+fn pressed() -> bool {
 	avr_device::interrupt::free(|_cs| {
-		if flag.load(Ordering::SeqCst) {
-			flag.store(false, Ordering::SeqCst);
+		if BUTTON_PRESSED.load(Ordering::Relaxed) {
+			BUTTON_PRESSED.store(false, Ordering::Relaxed);
 			true
 		} else {
 			false
@@ -174,7 +176,7 @@ fn main() -> ! {
 
 		loop {
 			// Allowing for button pressing while searching for network
-			if pressed(&BUTTON_PRESSED) {
+			if pressed() {
 				mosfet.toggle();
 			}
 
@@ -216,7 +218,7 @@ fn main() -> ! {
 			}
 
 			radio.to_idle().unwrap();
-			en_wdi_and_pd();
+			en_wdi_sei_and_pd();
 		}
 	}
 
@@ -233,7 +235,7 @@ fn main() -> ! {
 		// Sensor / heartbeat / commands / acuators loop
 
 		let now = now();
-		let button_pressed = pressed(&BUTTON_PRESSED);
+		let button_pressed = pressed();
 
 		if button_pressed {
 			// Toggle limb & update mosfet
@@ -251,7 +253,7 @@ fn main() -> ! {
 		// Or we have a hearbeat due
 		// Or an actuator value has changed
 		if button_pressed || now >= last_message + node_info.heartbeat_interval as u32 {
-			// radio.power_up().unwrap();
+			interrupt::disable();
 
 			let message = Message::Message(MessageData::Response {
 				id: None,
@@ -281,6 +283,7 @@ fn main() -> ! {
 		while let Some(Message::Message(MessageData::Command { id, command })) =
 			check_for_messages_for_a_bit(&mut radio, &mut irq)
 		{
+			interrupt::disable();
 			// Answer command
 			let message = Message::Message(MessageData::Response {
 				id: Some(id),
@@ -348,6 +351,27 @@ fn main() -> ! {
 							Response::ErrLimbNotFound
 						}
 					}
+					Command::ToggleLimb(limb_id) => {
+						if let Some(limb) = limbs
+							.iter_mut()
+							.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
+							.find(|limb| limb.0 == limb_id)
+						{
+							if let Limb(_, LimbType::Actuator(Actuator::Light(value))) = limb {
+								*value = !*value;
+								if *value {
+									mosfet.set_high();
+								} else {
+									mosfet.set_low();
+								}
+								Response::Limbs(limbs.clone())
+							} else {
+								Response::ErrLimbTypeDoesntMatch
+							}
+						} else {
+							Response::ErrLimbNotFound
+						}
+					}
 				},
 			});
 
@@ -365,6 +389,6 @@ fn main() -> ! {
 			led.toggle();
 		}
 
-		en_wdi_and_pd();
+		en_wdi_sei_and_pd();
 	}
 }

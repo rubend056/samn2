@@ -3,19 +3,16 @@
 
 use core::{
 	cell::Cell,
-	cmp::{max, min},
 	fmt::Debug,
 };
 
-use arduino_hal::{delay_ms, delay_us, hal::wdt};
+use arduino_hal::{delay_us, hal::wdt};
 use avr_device::interrupt::{self, Mutex};
 
 pub mod mypanic;
 
 use samn_common::{
-	node::{
-		Actuator, Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response, Sensor, LIMBS_MAX,
-	},
+	node::Message,
 	radio::*,
 };
 
@@ -63,7 +60,7 @@ pub fn now() -> u32 {
 }
 
 /// Enable watchdog interrupt and enter power down mode
-pub fn en_wdi_and_pd() {
+pub fn en_wdi_sei_and_pd() {
 	// A little stealing so we can set some low level registers
 	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
 	// Enable watchdog timer as an interrupt
@@ -78,16 +75,7 @@ pub fn en_wdi_and_pd() {
 	}
 }
 
-// #[avr_device::interrupt(atmega328pb)]
-// fn INT1() { // This corresponds to the irq pin on nrf24
-// 	          // We do nothing, this is just so interrupt vector is set
-// }
-// pub fn setup_int1() {
-//     // Configure INT1 for falling edge. 0x03 would be rising edge.
-//     dp.EXINT.eicra.modify(|_, w| w.isc1().bits(0x02));
-//     // Enable the INT1 interrupt source.
-//     dp.EXINT.eimsk.modify(|_, w| w.int1().set_bit());
-// }
+
 pub fn check_for_messages_for_a_bit<E: Debug, R: Radio<E>, P: embedded_hal::digital::InputPin>(
 	radio: &mut R,
 	irq: &mut P,
@@ -102,24 +90,6 @@ pub fn check_for_messages_for_a_bit<E: Debug, R: Radio<E>, P: embedded_hal::digi
 		{
 			// radio.to_idle().unwrap();
 			return Some(message);
-		}
-		delay_us(500);
-	}
-	// radio.to_idle().unwrap();
-	None
-}
-
-pub fn check_for_payloads_for_a_bit<E: Debug, R: Radio<E>, P: embedded_hal::digital::InputPin>(
-	radio: &mut R,
-	irq: &mut P,
-) -> Option<Payload> {
-	radio.to_rx().unwrap();
-
-	// >= 150 ms wait
-	for _ in 0..u8::MAX {
-		if let Ok(payload) = radio.receive(irq, None) {
-			// radio.to_idle().unwrap();
-			return Some(payload);
 		}
 		delay_us(500);
 	}
