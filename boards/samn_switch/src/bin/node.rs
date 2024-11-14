@@ -11,8 +11,9 @@
  *
  */
 use arduino_hal::{delay_ms, hal::wdt, spi, Delay};
-use avr_device::interrupt::{self, Mutex};
-use embedded_hal::{digital::OutputPin, spi::Mode};
+use avr_device::interrupt;
+use embedded_hal::spi::Mode;
+use helper::*;
 use samn_common::nrf24::NRF24L01;
 use samn_switch::mypanic::maybe_init_serial_panic;
 
@@ -26,53 +27,60 @@ use samn_common::{
 use samn_switch::*;
 
 // ***************** SWITCH TOGGLING
-use core::{
-	cell::RefCell,
-	sync::{
-		self,
-		atomic::{AtomicBool, Ordering},
-	},
-};
-static SWITCH_TOGGLED: AtomicBool = AtomicBool::new(false);
-static SWITCH_STATE: AtomicBool = AtomicBool::new(false);
-static RADIO_IRQ_ACTIVE: AtomicBool = AtomicBool::new(false);
+use core::sync::atomic::{AtomicBool, Ordering};
+static mut SWITCH_TOGGLED: bool = false;
+static mut SWITCH_STATE: bool = false;
+static mut RADIO_IRQ_ACTIVE: bool = false;
 
 // Executes on IRQ / Button Press changes
 #[avr_device::interrupt(atmega328p)]
 #[allow(non_snake_case)]
-fn PCINT2() {
+unsafe fn PCINT2() {
 	delay_ms(1);
 
-	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
+	let irq_flag = interrupt::disable_save();
+	{
+		let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
+		// Check if button or irq is active.
 
-	// Check if button or irq is active.
-	let pin = dp.PORTD.pind.read();
+		let pin = dp.PORTD.pind.read();
 
-	// We don't do anything with IRQ because that'll get checked later on the main loop
-	// We just have to make sure that our button is the one that triggered this interrupt
-	// for us to set BUTTTON_PRESSED
-	let button_active = pin.pd5().bit_is_clear();
-	RADIO_IRQ_ACTIVE.store(pin.pd2().bit_is_clear(), Ordering::Relaxed);
+		// We don't do anything with IRQ because that'll get checked later on the main loop
+		// We just have to make sure that our button is the one that triggered this interrupt
+		// for us to set BUTTTON_PRESSED
+		let button_active = pin.pd5().bit_is_set();
+		RADIO_IRQ_ACTIVE = pin.pd2().bit_is_clear();
 
-	if button_active != SWITCH_STATE.load(Ordering::Relaxed) {
-		SWITCH_STATE.store(button_active, Ordering::Relaxed);
-		SWITCH_TOGGLED.store(true, Ordering::Relaxed);
+		if button_active != SWITCH_STATE {
+			SWITCH_STATE = button_active;
+			SWITCH_TOGGLED = true;
+		}
 	}
+	interrupt::restore(irq_flag);
 }
 fn switch_toggled() -> bool {
-	avr_device::interrupt::free(|_cs| {
-		if SWITCH_TOGGLED.load(Ordering::Relaxed) {
-			SWITCH_TOGGLED.store(false, Ordering::Relaxed);
+	let irq_flag = interrupt::disable_save();
+	let toggled;
+	{
+		toggled = if unsafe { SWITCH_TOGGLED } {
+			unsafe {
+				SWITCH_TOGGLED = false;
+			}
 			true
 		} else {
 			false
-		}
-	})
+		};
+	}
+	unsafe {
+		interrupt::restore(irq_flag);
+	}
+	toggled
 }
 
 // ****************** ISENSE
+
 // Shared state for ADC readings and control logic
-static mut I_READINGS_AVERAGE: u16 = 0;
+static mut I_READINGS_AVERAGE: f32 = 0.;
 static mut I_READINGS: [u16; 16] = [0; 16];
 static mut READING_INDEX: u8 = 0;
 
@@ -82,51 +90,60 @@ static mut ADC: Option<arduino_hal::adc::Adc> = None;
 static mut ISENSE_PIN: Option<arduino_hal::port::Pin<arduino_hal::port::mode::Analog, arduino_hal::hal::port::PC1>> =
 	None;
 
-// Helper function to calculate the average of the last 16 ADC readings
-fn average_adc_readings() -> u16 {
-	interrupt::free(|_| unsafe { I_READINGS_AVERAGE })
-}
-
 #[avr_device::interrupt(atmega328p)]
-fn TIMER0_COMPA() {
-	interrupt::free(|_| {
-		// Borrow the ADC and pin
-		let mut adc_ref = unsafe { &mut ADC };
-		let mut pin_ref = unsafe { &mut ISENSE_PIN };
-
-		if let (Some(adc), Some(isense_pin)) = (adc_ref.as_mut(), pin_ref.as_mut()) {
+unsafe fn TIMER0_COMPA() {
+	let irq_flag = interrupt::disable_save();
+	{
+		if let (Some(adc), Some(isense_pin)) = (&mut ADC, &mut ISENSE_PIN) {
 			// Perform an ADC reading
-			match adc.read_nonblocking(isense_pin) {
-				Ok(adc_value) => {
-					// Start the next reading
-					adc.read_nonblocking(isense_pin).ok();
+			if let Ok(adc_value) = adc.read_nonblocking(isense_pin) {
+				// Start the next reading
+				adc.read_nonblocking(isense_pin).ok();
 
-					// Access the ADC readings and current index
-					let mut readings = unsafe { &mut I_READINGS };
-					let mut index = unsafe { &mut READING_INDEX };
+				// Access the ADC readings and current index
+				let readings = &mut I_READINGS;
+				let index = &mut READING_INDEX;
 
-					// Store the reading in the circular buffer
-					readings[*index as usize] = adc_value;
-					*index = (*index + 1) % 16; // Move to the next index, wrapping around to 0 after 15
-					if *index == 0 {
-						// Store the average of the readings in the longer buffer
-						let mut total_average = unsafe { &mut I_READINGS_AVERAGE };
+				// Store the reading in the circular buffer
+				readings[*index as usize] = adc_value;
+				*index = (*index + 1) % 16; // Move to the next index, wrapping around to 0 after 15
+				if *index == 0 {
+					// Store the average of the readings in the longer buffer
+					let total_average = &mut I_READINGS_AVERAGE;
 
-						let sum: u16 = readings.iter().map(|&r| (r as i16 - 511).abs() as u16).sum();
-						let average = (sum / 16) as u32 * 100;
-						*total_average = ((*total_average as u32 * 619 + average) / 620) as u16;
-					}
+					let sum: u16 = readings.iter().map(|&r| (r as i16 - 511).abs() as u16).sum();
+					let average = sum as f32 * 100. / 16.;
+					*total_average = (*total_average as f32 * 49. + average) / 50.;
 				}
-				_ => {}
 			}
 		}
-	});
+	}
+	interrupt::restore(irq_flag);
+}
+// Helper function to calculate the average of the last 16 ADC readings
+unsafe fn average_adc_readings() -> u16 {
+	let irq_flag = interrupt::disable_save();
+	let a = I_READINGS_AVERAGE as u16;
+	interrupt::restore(irq_flag);
+	a
+}
+// Spits out current in milliamps (max of 20_000 mA, or 20A)
+fn average_current() -> u16 {
+	let reading = unsafe { average_adc_readings() };
+	// same as * 20_000 / 51_200
+	if reading < 2_600
+	// To prevent an overflow & conserve precision
+	{
+		reading * 25 / 64
+	} else {
+		reading / 64 * 25
+	}
 }
 
 // With a clock of 8MHz a prescaler of 64 and a count of 125
-// This will run every `1 / (8_000_000 / 64 / 250)` = `2ms`
+// This will run every `1 / (8_000_000 / 64 / 125)` = `1ms`
 const PRESCALER: u32 = 64;
-const TIMER_COUNTS: u32 = 250;
+const TIMER_COUNTS: u32 = 125;
 fn timer_init(tc0: arduino_hal::pac::TC0) {
 	// Configure the timer for the above interval (in CTC mode)
 	// and enable its interrupt.
@@ -141,26 +158,14 @@ fn timer_init(tc0: arduino_hal::pac::TC0) {
 	});
 	tc0.timsk0.write(|w| w.ocie0a().set_bit());
 }
-// Spits out current in milliamps (max of 20_000 mA, or 20A)
-fn average_current() -> u16 {
-	let reading = average_adc_readings();
-	// same as * 20_000 / 51_200
-	if reading < 2_600
-	// To prevent an overflow & conserve precision
-	{
-		reading * 25 / 64
-	} else {
-		reading / 64 * 25
-	}
-}
 
 fn temperature_humidity<E: core::fmt::Debug, I2C: embedded_hal::i2c::I2c<Error = E>>(i2c: &mut I2C) -> (i16, u8) {
 	const ADDRESS: u8 = 0x70;
 	const WAKEUP: [u8; 2] = [0x35, 0x17];
 	i2c.write(ADDRESS, &WAKEUP).unwrap();
 	delay_ms(5);
-	const NORMAL_T_FIRST: [u8; 2] = [0x78, 0x66];
-	i2c.write(ADDRESS, &NORMAL_T_FIRST).unwrap();
+	const NORMAL_TEMP_FIRST: [u8; 2] = [0x78, 0x66];
+	i2c.write(ADDRESS, &NORMAL_TEMP_FIRST).unwrap();
 
 	// Wait until device is ready to read
 	delay_ms(20);
@@ -173,6 +178,21 @@ fn temperature_humidity<E: core::fmt::Debug, I2C: embedded_hal::i2c::I2c<Error =
 	i2c.write(ADDRESS, &SLEEP).unwrap();
 
 	((temp / 15 * 4) as i16 - 4500, (hum / 665) as u8)
+}
+
+/// This checks if there's anything for the MCU to do while interrupts are off
+///  - if there's nothing to do, reenable interrupts
+///  - on the other hand, keep them enabled and turn off necessary flags
+unsafe fn has_something_happened() -> bool {
+	let irq_flag = interrupt::disable_save();
+	if WDT_TRIGGERED || SWITCH_TOGGLED || RADIO_IRQ_ACTIVE {
+		WDT_TRIGGERED = false;
+		RADIO_IRQ_ACTIVE = false;
+		true
+	} else {
+		interrupt::restore(irq_flag);
+		false
+	}
 }
 
 // ************** MAIN
@@ -201,7 +221,10 @@ fn main() -> ! {
 	);
 
 	// Switch
-	let mut _switch = pins.switch.into_pull_up_input(); // make sure switch has has a pull-up attached
+	let switch = pins.switch.into_pull_up_input(); // make sure switch has has a pull-up attached
+	unsafe {
+		SWITCH_STATE = switch.is_high();
+	} // We can do this here because interrupts are off right now
 
 	// Led
 	let mut led = pins.led.into_output();
@@ -212,7 +235,7 @@ fn main() -> ! {
 	let mut node_addr = 0x9797u16;
 	let node_info: NodeInfo = NodeInfo {
 		board: Board::SamnSwitch,
-		heartbeat_interval: HEARTBEAT_INTERVAL,
+		heartbeat_interval: 30,
 	};
 
 	// Serial
@@ -259,10 +282,11 @@ fn main() -> ! {
 		let isense_pin = pins.isense.into_analog_input(&mut adc);
 		let mut _vsense = pins.vsense.into_pull_up_input();
 		// Move ADC and pin to their static locations
-		interrupt::free(|_| {
-			unsafe { ADC = Some(adc) };
-			unsafe { ISENSE_PIN = Some(isense_pin) };
-		});
+		unsafe {
+			ADC = Some(adc);
+			ISENSE_PIN = Some(isense_pin);
+		}
+
 		timer_init(dp.TC0);
 	}
 
@@ -305,13 +329,7 @@ fn main() -> ! {
 
 		loop {
 			// Only execute if anything good triggered this wakeup
-			if WDT_TRIGGERED.load(Ordering::Relaxed)
-				|| SWITCH_TOGGLED.load(Ordering::Relaxed)
-				|| RADIO_IRQ_ACTIVE.load(Ordering::Relaxed)
-			{
-				interrupt::disable();
-				WDT_TRIGGERED.store(false, Ordering::Relaxed);
-
+			if unsafe { has_something_happened() } {
 				let now = now();
 
 				// Allowing for switch toggling while searching for network
@@ -334,17 +352,12 @@ fn main() -> ! {
 
 					delay_ms(LED_OFF_MS);
 
-					// Send looking for network
-					radio
-						.transmit(&Payload::new_with_addr(
-							&postcard::to_vec::<Message, 32>(&Message::SearchingNetwork(node_id)).unwrap(),
-							node_addr,
-							addr_to_nrf24_hq_pipe(node_addr),
-						))
-						.unwrap();
+					send_looking_for_network(&mut radio, node_id, node_addr);
 					last_message = now;
 
-					if let Some(Message::Network(node_id_in, node_addr_in)) = check_for_messages_for_a_bit(&mut radio, &mut irq) {
+					if let Some(Message::Network(node_id_in, node_addr_in)) =
+						check_for_messages_for_a_bit(&mut radio, &mut irq, &mut Delay::new())
+					{
 						if node_id_in == node_id {
 							node_addr = node_addr_in;
 							radio.set_rx_filter(&[addr_to_rx_pipe(node_addr)]).unwrap();
@@ -359,7 +372,7 @@ fn main() -> ! {
 				radio.to_idle().unwrap();
 			}
 
-			en_wdi_and_idle();
+			en_wd_and_interrupts_then_idle();
 		}
 	}
 
@@ -378,7 +391,7 @@ fn main() -> ! {
 		Some(Limb(
 			2,
 			LimbType::Sensor {
-				report_interval: 60 * 5,
+				report_interval: 60 * 2,
 				data: Some(Sensor::Current(average_current())),
 			},
 		)),
@@ -390,13 +403,7 @@ fn main() -> ! {
 
 	loop {
 		// Sensor / heartbeat / commands / acuators loop
-		if WDT_TRIGGERED.load(Ordering::Relaxed)
-			|| SWITCH_TOGGLED.load(Ordering::Relaxed)
-			|| RADIO_IRQ_ACTIVE.load(Ordering::Relaxed)
-		{
-			interrupt::disable();
-			WDT_TRIGGERED.store(false, Ordering::Relaxed);
-
+		if unsafe { has_something_happened() } {
 			let now = now();
 			let toggled = switch_toggled();
 			let sensor_updated = {
@@ -444,25 +451,17 @@ fn main() -> ! {
 						Response::Heartbeat(now)
 					},
 				});
-				let mut data = [0u8; 32];
-				let data = postcard::to_slice(&message, &mut data).unwrap();
 
 				// Indicate we are sending
 				led.toggle();
-				radio
-					.transmit(&Payload::new_with_addr(
-						&data,
-						node_addr,
-						addr_to_nrf24_hq_pipe(node_addr),
-					))
-					.unwrap();
+				send_message(&mut radio, message, node_addr);
 				led.toggle();
 				last_message = now;
 			}
 
 			// Listen for commands for >=76ms, reset counter if command received
 			while let Some(Message::Message(MessageData::Command { id, command })) =
-				check_for_messages_for_a_bit(&mut radio, &mut irq)
+				check_for_messages_for_a_bit(&mut radio, &mut irq, &mut Delay::new())
 			{
 				let response = match command {
 					Command::Info => Response::Info(node_info.clone()),
@@ -552,22 +551,16 @@ fn main() -> ! {
 				};
 
 				// Answer command
-				let payload = {
-					let mut data_initial = [0u8; 28];
-					let data;
-					{
-						let message: Message = Message::Message(MessageData::Response { id: Some(id), response });
-						data = postcard::to_slice(&message, &mut data_initial).unwrap();
-					};
-					Payload::new_with_addr(&data, node_addr, addr_to_nrf24_hq_pipe(node_addr))
-				};
-
 				// Toggle leds while doing it
 				led.toggle();
-				radio.transmit(&payload).unwrap(); // Send sets tx, sends
+				send_message(
+					&mut radio,
+					Message::Message(MessageData::Response { id: Some(id), response }),
+					node_addr,
+				);
 				led.toggle();
 			}
 		}
-		en_wdi_and_idle();
+		en_wd_and_interrupts_then_idle();
 	}
 }

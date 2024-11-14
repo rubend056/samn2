@@ -74,25 +74,3 @@ pub fn en_wdi_sei_and_pd() {
 		avr_device::asm::sleep();
 	}
 }
-
-
-pub fn check_for_messages_for_a_bit<E: Debug, R: Radio<E>, P: embedded_hal::digital::InputPin>(
-	radio: &mut R,
-	irq: &mut P,
-) -> Option<Message> {
-	radio.to_rx().unwrap();
-
-	// >= 150 ms wait
-	for _ in 0..u8::MAX {
-		if let Ok(message) = radio
-			.receive(irq, None)
-			.map(|payload| postcard::from_bytes::<Message>(payload.data()).unwrap())
-		{
-			// radio.to_idle().unwrap();
-			return Some(message);
-		}
-		delay_us(500);
-	}
-	// radio.to_idle().unwrap();
-	None
-}

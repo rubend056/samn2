@@ -1,23 +1,12 @@
 #![no_std]
 #![feature(abi_avr_interrupt)]
 
-use core::{
-	cell::Cell,
-	cmp::{max, min},
-	fmt::Debug,
-};
+use core::cell::Cell;
 
-use arduino_hal::{delay_ms, delay_us, hal::wdt};
+use arduino_hal::hal::wdt;
 use avr_device::interrupt::{self, Mutex};
 
 pub mod mypanic;
-
-use samn_common::{
-	node::{
-		Actuator, Board, Command, Limb, LimbType, Limbs, Message, MessageData, NodeInfo, Response, Sensor, LIMBS_MAX,
-	},
-	radio::*,
-};
 
 pub const WATCHDOG_TIMEOUT: wdt::Timeout = wdt::Timeout::Ms8000;
 pub const WDT_SECONDS_INCREASE: u32 = 8;
@@ -76,53 +65,4 @@ pub fn en_wdi_and_pd() {
 		// Sleep
 		avr_device::asm::sleep();
 	}
-}
-
-// #[avr_device::interrupt(atmega328pb)]
-// fn INT1() { // This corresponds to the irq pin on nrf24
-// 	          // We do nothing, this is just so interrupt vector is set
-// }
-// pub fn setup_int1() {
-//     // Configure INT1 for falling edge. 0x03 would be rising edge.
-//     dp.EXINT.eicra.modify(|_, w| w.isc1().bits(0x02));
-//     // Enable the INT1 interrupt source.
-//     dp.EXINT.eimsk.modify(|_, w| w.int1().set_bit());
-// }
-pub fn check_for_messages_for_a_bit<E: Debug, R: Radio<E>, P: embedded_hal::digital::InputPin>(
-	radio: &mut R,
-	irq: &mut P,
-) -> Option<Message> {
-	radio.to_rx().unwrap();
-
-	// >= 150 ms wait
-	for _ in 0..u8::MAX {
-		if let Ok(message) = radio
-			.receive(irq, None)
-			.map(|payload| postcard::from_bytes::<Message>(payload.data()).unwrap())
-		{
-			// radio.to_idle().unwrap();
-			return Some(message);
-		}
-		delay_us(500);
-	}
-	// radio.to_idle().unwrap();
-	None
-}
-
-pub fn check_for_payloads_for_a_bit<E: Debug, R: Radio<E>, P: embedded_hal::digital::InputPin>(
-	radio: &mut R,
-	irq: &mut P,
-) -> Option<Payload> {
-	radio.to_rx().unwrap();
-
-	// >= 150 ms wait
-	for _ in 0..u8::MAX {
-		if let Ok(payload) = radio.receive(irq, None) {
-			// radio.to_idle().unwrap();
-			return Some(payload);
-		}
-		delay_us(500);
-	}
-	// radio.to_idle().unwrap();
-	None
 }

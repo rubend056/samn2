@@ -6,6 +6,7 @@ use core::cmp::{max, min};
 
 use arduino_hal::{delay_ms, hal::wdt, spi, Delay};
 use embedded_hal::spi::Mode;
+use helper::*;
 use samn9::mypanic::maybe_init_serial_panic;
 use samn_common::nrf24::NRF24L01;
 
@@ -100,17 +101,12 @@ fn main() -> ! {
 
 				delay_ms(LED_OFF_MS);
 
-				// Send looking for network
-				radio
-					.transmit(&Payload::new_with_addr(
-						&postcard::to_vec::<Message, 32>(&Message::SearchingNetwork(node_id)).unwrap(),
-						node_addr,
-						addr_to_nrf24_hq_pipe(node_addr),
-					))
-					.unwrap();
+				send_looking_for_network(&mut radio, node_id, node_addr);
 				last_message = now;
 
-				if let Some(Message::Network(node_id_in, node_addr_in)) = check_for_messages_for_a_bit(&mut radio, &mut irq) {
+				if let Some(Message::Network(node_id_in, node_addr_in)) =
+					check_for_messages_for_a_bit(&mut radio, &mut irq, &mut Delay::new())
+				{
 					if node_id_in == node_id {
 						node_addr = node_addr_in;
 						radio.set_rx_filter(&[addr_to_rx_pipe(node_addr)]).unwrap();
@@ -221,7 +217,7 @@ fn main() -> ! {
 		// Or we have a hearbeat due
 		if sensor_updated || now >= last_message + node_info.heartbeat_interval as u32 {
 			radio.power_up().unwrap();
-			
+
 			let message = Message::Message(MessageData::Response {
 				id: None,
 				response: if sensor_updated {
@@ -230,105 +226,112 @@ fn main() -> ! {
 					Response::Heartbeat(now)
 				},
 			});
-			let mut data = [0u8; 32];
-			let data = postcard::to_slice(&message, &mut data).unwrap();
 
 			// Indicate we are sending
 			led.toggle();
-			radio
-				.transmit(&Payload::new_with_addr(
-					&data,
-					node_addr,
-					addr_to_nrf24_hq_pipe(node_addr),
-				))
-				.unwrap();
+			send_message(&mut radio, message, node_addr);
 			led.toggle();
 			last_message = now;
 
 			// Listen for commands for >=76ms, reset counter if command received
 			while let Some(Message::Message(MessageData::Command { id, command })) =
-				check_for_messages_for_a_bit(&mut radio, &mut irq)
+				check_for_messages_for_a_bit(&mut radio, &mut irq, &mut Delay::new())
 			{
 				// Answer command
-				let message = Message::Message(MessageData::Response {
-					id: Some(id),
-					response: match command {
-						Command::Info => Response::Info(node_info.clone()),
-						Command::Limbs => Response::Limbs(limbs.clone()),
-						Command::SetLimb(limb_in) => {
-							if let Some(limb) = limbs
-								.iter_mut()
-								.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
-								.find(|limb| limb.0 == limb_in.0)
-							{
-								if variant_eq(&limb.1, &limb_in.1) {
-									match (&mut limb.1, limb_in.1) {
-										(LimbType::Actuator(actuator), LimbType::Actuator(actuator_in)) => {
-											if variant_eq(actuator, &actuator_in) {
-												*actuator = actuator_in;
-												// Updating actuators
-												for limb in limbs.iter() {
-													if let Some(Limb(limb_id, LimbType::Actuator(actuator))) = limb {
-														match (*limb_id, actuator) {
-															(1, Actuator::Light(value)) => {
-																if *value {
-																	led.set_high();
-																} else {
-																	led.set_low();
-																}
+				let response = match command {
+					Command::Info => Response::Info(node_info.clone()),
+					Command::Limbs => Response::Limbs(limbs.clone()),
+					Command::SetLimb(limb_in) => {
+						if let Some(limb) = limbs
+							.iter_mut()
+							.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
+							.find(|limb| limb.0 == limb_in.0)
+						{
+							if variant_eq(&limb.1, &limb_in.1) {
+								match (&mut limb.1, limb_in.1) {
+									(LimbType::Actuator(actuator), LimbType::Actuator(actuator_in)) => {
+										if variant_eq(actuator, &actuator_in) {
+											*actuator = actuator_in;
+											// Updating actuators
+											for limb in limbs.iter() {
+												if let Some(Limb(limb_id, LimbType::Actuator(actuator))) = limb {
+													match (*limb_id, actuator) {
+														(1, Actuator::Light(value)) => {
+															if *value {
+																led.set_high();
+															} else {
+																led.set_low();
 															}
-															_ => {}
 														}
+														_ => {}
 													}
 												}
-
-												// Send limbs again
-												Response::Limbs(limbs.clone())
-											// Response::Ok
-											} else {
-												Response::ErrLimbTypeDoesntMatch
 											}
-										}
-
-										(
-											LimbType::Sensor {
-												report_interval,
-												data: _,
-											},
-											LimbType::Sensor {
-												report_interval: report_interval_in,
-												data: _,
-											},
-										) => {
-											*report_interval = report_interval_in;
 
 											// Send limbs again
 											Response::Limbs(limbs.clone())
-											// Response::Ok
+										// Response::Ok
+										} else {
+											Response::ErrLimbTypeDoesntMatch
 										}
-										_ => Response::ErrLimbTypeDoesntMatch,
 									}
-								} else {
-									Response::ErrLimbTypeDoesntMatch
+
+									(
+										LimbType::Sensor {
+											report_interval,
+											data: _,
+										},
+										LimbType::Sensor {
+											report_interval: report_interval_in,
+											data: _,
+										},
+									) => {
+										*report_interval = report_interval_in;
+
+										// Send limbs again
+										Response::Limbs(limbs.clone())
+										// Response::Ok
+									}
+									_ => Response::ErrLimbTypeDoesntMatch,
 								}
 							} else {
-								Response::ErrLimbNotFound
+								Response::ErrLimbTypeDoesntMatch
 							}
+						} else {
+							Response::ErrLimbNotFound
 						}
-					},
-				});
+					}
+					Command::ToggleLimb(limb_id) => {
+						if let Some(limb) = limbs
+							.iter_mut()
+							.filter_map(|l| if let Some(l) = l { Some(l) } else { None })
+							.find(|limb| limb.0 == limb_id)
+						{
+							if let Limb(_, LimbType::Actuator(Actuator::Light(value))) = limb {
+								*value = !*value;
+								if *value {
+									led.set_high();
+								} else {
+									led.set_low();
+								}
+								Response::Limbs(limbs.clone())
+							} else {
+								Response::ErrLimbTypeDoesntMatch
+							}
+						} else {
+							Response::ErrLimbNotFound
+						}
+					}
+				};
 
-				let mut data = [0u8; 32];
-				let data = postcard::to_slice(&message, &mut data).unwrap();
-
+				// Answer command
+				// Toggle leds while doing it
 				led.toggle();
-				radio
-					.transmit(&Payload::new_with_addr(
-						&data,
-						node_addr,
-						addr_to_nrf24_hq_pipe(node_addr),
-					))
-					.unwrap(); // Send sets tx, sends
+				send_message(
+					&mut radio,
+					Message::Message(MessageData::Response { id: Some(id), response }),
+					node_addr,
+				);
 				led.toggle();
 			}
 
@@ -336,7 +339,6 @@ fn main() -> ! {
 			radio.power_down().unwrap();
 		}
 
-		
 		en_wdi_and_pd();
 	}
 }

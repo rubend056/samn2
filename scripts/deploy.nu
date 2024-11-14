@@ -3,6 +3,12 @@ export def psize [board, bin] {
     let out = $"($root)/out/($board)";
     avr-size -C --mcu=atmega328p $"($out)/($bin).elf"
 }
+export def bloat [board, bin] {
+    # let root = $env.PWD
+    enter $"boards/($board)"
+        cargo bloat --release --bin $bin
+    dexit
+}
 export def build [board, bin] {
     let root = $env.PWD
     let out = $"($root)/out/($board)";

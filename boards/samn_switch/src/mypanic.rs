@@ -21,13 +21,9 @@
 // }
 
 use crate::acknowlege_and_disable_watchdog;
-use arduino_hal::{
-	delay_ms,
-	hal::port::*,
-	port::{mode::Output, Pin},
-};
-use heapless::String;
-use ufmt::uwrite;
+use arduino_hal::delay_ms;
+// use heapless::String;
+// use ufmt::uwrite;
 
 use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
@@ -43,6 +39,25 @@ use core::sync::atomic::{self, Ordering};
 // 		>,
 // 	>,
 // > = None;
+// struct CharArrayWriter<'a> {
+// 	buf: &'a mut [char],
+// 	pos: usize,
+// }
+
+// impl<'a> ufmt::uWrite for CharArrayWriter<'a> {
+// 	type Error = core::fmt::Error;
+
+// 	fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
+// 			for c in s.chars() {
+// 					if self.pos >= self.buf.len() {
+// 							return Err(core::fmt::Error);
+// 					}
+// 					self.buf[self.pos] = c;
+// 					self.pos += 1;
+// 			}
+// 			Ok(())
+// 	}
+// }
 
 #[inline(never)]
 #[panic_handler]
@@ -51,14 +66,19 @@ fn panic(_info: &PanicInfo) -> ! {
 	avr_device::interrupt::disable();
 	acknowlege_and_disable_watchdog();
 
-	// if let Some(loc) =_info.location(){
-	// 	let mut s = String::<20>::new();
-	// 	uwrite!(&mut s, "{}", loc.file()); 
-	// 	// if loc.file().len() > 10 {
-	// 	// 	loop{atomic::compiler_fence(Ordering::SeqCst);}
-	// 	// }
+	// We're testing debugging stuff
+	if let Some(loc) =_info.location(){
+		// if loc.file().len() > 0 {
+		// 	loop {}
+		// }
+		// let mut s = String::<20>::new();
+		// uwrite!()
+		// uwrite!(&mut s, "{}", loc.file()); 
+		// if loc.file().len() > 10 {
+		// 	loop{atomic::compiler_fence(Ordering::SeqCst);}
+		// }
 		
-	// }
+	}
 	// if _info.message().as_str().map(|x|x.len()>10).unwrap_or(true){
 	// 	loop{atomic::compiler_fence(Ordering::SeqCst);}
 	// }
