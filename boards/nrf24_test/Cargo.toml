@@ -1,0 +1,14 @@
+[package]
+name = "samn9_test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arduino-hal = {path = "../../avr-hal/arduino-hal", features = ["samn9"]}
+panic-halt = {workspace = true}
+nb = {workspace = true}
+embedded-hal = {workspace = true}
+avr-device = {workspace = true}
+embedded-hal-bus = {workspace = true}
+# samn-common = {path = "../../samn-common", features = ["nrf24"]}
+nrf24 = {path = "../../samn-common/nrf24", default-features = false}
