@@ -2,7 +2,7 @@
     "rust-analyzer.checkOnSave.overrideCommand": [
 		"/bin/nu",
 		"-c",
-		"['nrf24_test', 'samn9'] | each {|board| enter $'boards/($board)'; cargo check --quiet --message-format=json; dexit} "
+		"['samn9', 'samn_dc', 'samn_switch'] | each {|board| enter $'boards/($board)'; cargo check --quiet --message-format=json; dexit} "
 	],
 	"editor.foldingImportsByDefault": false,
 }

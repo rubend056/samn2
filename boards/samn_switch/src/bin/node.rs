@@ -271,9 +271,10 @@ fn main() -> ! {
 			},
 		);
 		let spi = embedded_hal_bus::spi::ExclusiveDevice::new(spi, pins.csn.into_output(), Delay::new());
-		radio = NRF24L01::new(pins.ce.into_output(), spi).unwrap();
-		radio.configure().unwrap();
-		radio.set_rx_filter(&[addr_to_rx_pipe(node_addr)]).unwrap();
+		radio = NRF24L01::new(pins.ce.into_output(), spi);
+
+		radio.init(&mut Delay::new()).unwrap();
+		radio.set_rx_filter(&[DEFAULT_PIPE, addr_to_rx_pipe(node_addr)]).unwrap();
 	}
 
 	// Isense / Vsense
@@ -352,15 +353,15 @@ fn main() -> ! {
 
 					delay_ms(LED_OFF_MS);
 
-					send_looking_for_network(&mut radio, node_id, node_addr);
+					send_message_nrf24(&mut radio, Message::SearchingNetwork(node_id), node_addr, &mut Delay::new()).ok();
 					last_message = now;
 
-					if let Some(Message::Network(node_id_in, node_addr_in)) =
+					if let Ok(Some(Message::Network(node_id_in, node_addr_in))) =
 						check_for_messages_for_a_bit(&mut radio, &mut irq, &mut Delay::new())
 					{
 						if node_id_in == node_id {
 							node_addr = node_addr_in;
-							radio.set_rx_filter(&[addr_to_rx_pipe(node_addr)]).unwrap();
+							radio.set_rx_filter(&[DEFAULT_PIPE, addr_to_rx_pipe(node_addr)]).unwrap();
 							led.toggle();
 							delay_ms(LED_OFF_MS);
 							led.toggle();
@@ -454,13 +455,13 @@ fn main() -> ! {
 
 				// Indicate we are sending
 				led.toggle();
-				send_message(&mut radio, message, node_addr);
+				send_message_nrf24(&mut radio, message, node_addr,&mut Delay::new()).ok();
 				led.toggle();
 				last_message = now;
 			}
 
 			// Listen for commands for >=76ms, reset counter if command received
-			while let Some(Message::Message(MessageData::Command { id, command })) =
+			while let Ok(Some(Message::Message(MessageData::Command { id, command }))) =
 				check_for_messages_for_a_bit(&mut radio, &mut irq, &mut Delay::new())
 			{
 				let response = match command {
@@ -553,11 +554,12 @@ fn main() -> ! {
 				// Answer command
 				// Toggle leds while doing it
 				led.toggle();
-				send_message(
+				send_message_nrf24(
 					&mut radio,
 					Message::Message(MessageData::Response { id: Some(id), response }),
 					node_addr,
-				);
+					&mut Delay::new()
+				).ok();
 				led.toggle();
 			}
 		}
