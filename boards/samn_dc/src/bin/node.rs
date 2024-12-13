@@ -42,7 +42,7 @@ static RADIO_IRQ_ACTIVE: AtomicBool = AtomicBool::new(false);
 #[avr_device::interrupt(atmega328p)]
 #[allow(non_snake_case)]
 fn PCINT2() {
-	delay_ms(1);
+	delay_ms(3);
 
 	let dp = unsafe { avr_device::atmega328pb::Peripherals::steal() };
 
