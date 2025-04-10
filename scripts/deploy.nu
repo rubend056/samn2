@@ -16,7 +16,7 @@ export def build [board, bin] {
         #"-Zlocation-detail=none",
         "-Zunstable-options",
         #"-Zbuild-std-features=panic_immediate_abort",
-        "--out-dir", $out
+        "--artifact-dir", $out
     ]
     enter $"boards/($board)"
         cargo build ...$args --release --bin $bin

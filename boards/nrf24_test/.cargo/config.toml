@@ -1,5 +1,6 @@
 [build]
 target = "../specs/avr-atmega328pb.json"
+rustflags = ["-C", "target-cpu=atmega328pb"]
 
 [target.'cfg(target_arch = "avr")']
 runner = "ravedude uno -P /dev/ttyUSB0 -cb 57600"

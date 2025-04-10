@@ -1653,7 +1653,6 @@ dependencies = [
  "heapless",
  "nb 1.1.0",
  "panic-halt",
- "panic-serial",
  "postcard",
  "samn-common",
  "serde",
